@@ -1,0 +1,12 @@
+/.worktrees/
+/.evidence/
+**/node_modules/
+**/__pycache__/
+*.pyc
+.env
+.env.*
+!*.example
+settings.json
+tokens.json
+ledger.json
+npm-debug.log*

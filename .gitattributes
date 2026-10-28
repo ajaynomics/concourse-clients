@@ -1,0 +1,5 @@
+# Preserve upstream notices, source patches and immutable distribution bytes.
+*.tgz -text
+pi/vendor/**/THIRD-PARTY-NOTICES.txt -text -whitespace
+pi/vendor/**/source.patch -text -whitespace
+public/connectors/muse/v1/** -text

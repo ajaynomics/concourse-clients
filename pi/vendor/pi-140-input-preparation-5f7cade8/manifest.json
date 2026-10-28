@@ -1,0 +1,51 @@
+{
+	"schemaVersion": 1,
+	"source": {
+		"commit": "5f7cade86e49811fada9599833a72ca3da4c5852",
+		"dirty": false
+	},
+	"packages": [
+		{
+			"name": "@earendil-works/pi-agent-core",
+			"version": "1.4.0",
+			"tarball": "tarballs/earendil-works-pi-agent-core-1.4.0-1926efee2a94.tgz",
+			"integrity": "sha512-GSbv7iqUopPEUfC/3erDcGiv7lBLO+4pVgvPVKlA43J2l0q4PpciSeRQbx0fElNi2uJV4OpiZHoqY2UadhyZlw=="
+		},
+		{
+			"name": "@earendil-works/pi-ai",
+			"version": "1.4.0",
+			"tarball": "tarballs/earendil-works-pi-ai-1.4.0-cac2ce4b666f.tgz",
+			"integrity": "sha512-ysLOS2Zvc6XVReQ2c8gXfVGtx7xJqMpo4tr18K648gu+kvNjttVFFsx3bUbbqCIYuYe5X63vmAA2q0QOxHd30g=="
+		},
+		{
+			"name": "@earendil-works/pi-codemode",
+			"version": "1.4.0",
+			"tarball": "tarballs/earendil-works-pi-codemode-1.4.0-cf8d76316587.tgz",
+			"integrity": "sha512-z412MWWHP2HkyQQl/v59X4S95nnjMADKCY97+ts/tYhUw4csxKKaghYbb+g8qdsxCGIs6EkBVuXRwA3OiwQWNA=="
+		},
+		{
+			"name": "@earendil-works/pi-coding-agent",
+			"version": "1.4.0",
+			"tarball": "tarballs/earendil-works-pi-coding-agent-1.4.0-494fb64df50f.tgz",
+			"integrity": "sha512-SU+2TfUPreQeuGlFBr0GKOCcK1VFL50Wb9PyTzVfLh4C0/4zr1NUbfoxcU+gSqdahi1LdCdYRlVRF0XNdr8fJQ=="
+		},
+		{
+			"name": "@earendil-works/pi-mcp",
+			"version": "1.4.0",
+			"tarball": "tarballs/earendil-works-pi-mcp-1.4.0-f0f9dcd10cde.tgz",
+			"integrity": "sha512-8Pnc0Qze6OUmzgkjHx5ILiJ8+d2PQgB41Lwq4yvaVdbi2fg7qtQJU6n0PdssEI9ZjSrIH5vfZX6CjUIhQvDHvA=="
+		},
+		{
+			"name": "@earendil-works/pi-telemetry",
+			"version": "1.4.0",
+			"tarball": "tarballs/earendil-works-pi-telemetry-1.4.0-30a0c1235973.tgz",
+			"integrity": "sha512-MKDBI1lztZwm01COoROjPJuLn1u0699WLbn+VV4r7202U0UBso6VbjhfGQPet0wqMhqyPhLeFq3J1ibdEaeuJw=="
+		},
+		{
+			"name": "@earendil-works/pi-tui",
+			"version": "1.4.0",
+			"tarball": "tarballs/earendil-works-pi-tui-1.4.0-b06e1d47831c.tgz",
+			"integrity": "sha512-sG4dR4Mclz4S3snfGeoSE7OkNjXGgkBLfBCJ7Y7gYW0OkOvN883PgGrwPzGKmf3BUUGy5xzeEtprjxp71qFL3Q=="
+		}
+	]
+}

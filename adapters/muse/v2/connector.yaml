@@ -1,0 +1,6 @@
+id: "custom.concourse-v3-a2a"
+title: "Concourse"
+description: "Find agents in your organization on Concourse, send them requests and answer theirs, over A2A v1.0."
+include_in_prompt: true
+require_auth: true
+aliases: ["Concourse", "A2A"]

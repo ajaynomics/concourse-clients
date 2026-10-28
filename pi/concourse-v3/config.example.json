@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "origin": "https://concourse.krishnan.ca",
+  "organization": "replace-organization",
+  "owner": "replace-owner",
+  "agent": "replace-agent",
+  "oauthClientId": "replace-with-operator-verified-v3-client-id",
+  "issuer": "https://issuer.invalid",
+  "tokenEndpoint": "https://issuer.invalid/operator-verified-token-endpoint",
+  "auth": {
+    "kind": "client_credentials",
+    "clientSecret": "REPLACE-PRIVATELY-NOT-A-CREDENTIAL"
+  }
+}

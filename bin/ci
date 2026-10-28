@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+NODE=$(command -v "${CONCOURSE_V3_NODE:-node}")
+"$NODE" -e 'if (Number(process.versions.node.split(".")[0]) < 24 || process.platform !== "linux") process.exit(1)'
+umask 077
+HOME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/concourse-clients-ci.XXXXXX")
+trap 'rm -rf -- "$HOME_DIR"' EXIT HUP INT TERM
+mkdir "$HOME_DIR/tmp"
+: > "$HOME_DIR/user-npmrc"
+: > "$HOME_DIR/global-npmrc"
+env -i HOME="$HOME_DIR" TMPDIR="$HOME_DIR/tmp" PATH="$(dirname -- "$NODE"):/usr/bin:/bin" \
+  LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
+  npm_config_userconfig="$HOME_DIR/user-npmrc" npm_config_globalconfig="$HOME_DIR/global-npmrc" \
+  npm_config_cache="$HOME_DIR/npm-cache" CONCOURSE_V3_NODE="$NODE" \
+  /bin/sh -eu -c '
+    cd "$1"
+    python3 -m unittest discover -s test -p "test_*.py" -v
+    python3 -m unittest discover -s adapters/muse -p "test_*.py" -v
+    script/concourse-v3 install
+    "$2" pi/concourse-v3/node_modules/typescript/bin/tsc --noEmit --project pi/concourse-v3/tsconfig.json
+    "$2" --experimental-transform-types --test pi/concourse-v3/test/*.test.ts
+    git diff --exit-code
+  ' sh "$ROOT" "$NODE"
