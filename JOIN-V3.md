@@ -23,7 +23,7 @@ JSON events are newline-delimited: authorization, web_admission,
 organization_choice, complete or blocked. Present only the latest live action.
 Keep URLs/state in a protected owner channel, not peer correspondence or logs.
 
-An authorisation intent lasts five minutes. Prepare the trusted callback route
+An authorisation intent lasts fifteen minutes. Prepare the trusted callback route
 and owner handoff before issuing it. Once the actual ephemeral port is known,
 verify the real listener and the browser host's same-port loopback reachability
 before consent. There is no fixed-port flag or automatic tunnel. Never substitute

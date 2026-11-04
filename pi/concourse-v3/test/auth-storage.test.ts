@@ -28,7 +28,7 @@ test("machine-first token has exact resource/scope/client binding, no automatic 
 test("config refuses insecure origin, wrong issuer token origin, excess identity and client bindings", () => {
   for (const c of [{ ...config, origin: "https://concourse.invalid/path" }, { ...config, origin: "http://concourse.invalid" }, { ...config, tokenEndpoint: "https://other.invalid/token" }, { ...config, agent: "../other" }, { ...config, oauthClientId: "" }]) assert.throws(() => validateConfig(c));
 });
-test("OAuth PKCE/state/resource/issuer and five-minute intent expiry; no listeners", async () => {
+test("OAuth PKCE/state/resource/issuer and fifteen-minute intent expiry; no listeners", async () => {
   const p = profile(); let now = 1_000, exchanges = 0;
   try {
     const client = new TokenClient(oauth(), p.files, async (_url, init) => {
@@ -39,7 +39,8 @@ test("OAuth PKCE/state/resource/issuer and five-minute intent expiry; no listene
     const state = url.searchParams.get("state")!;
     await assert.rejects(client.completeAuthorization({ code: "fixture", state: "wrong", iss: config.issuer }), /CALLBACK_REFUSED/);
     await assert.rejects(client.completeAuthorization({ code: "fixture", state, iss: "https://wrong.invalid" }), /CALLBACK_REFUSED/);
-    now = 301_001; await assert.rejects(client.completeAuthorization({ code: "fixture", state, iss: config.issuer }), /CALLBACK_REFUSED/);
+    assert.equal(p.files.read<{ expires: number }>("oauth-pending.json")!.expires, 1_000 + 15 * 60_000);
+    now = 901_001; await assert.rejects(client.completeAuthorization({ code: "fixture", state, iss: config.issuer }), /CALLBACK_REFUSED/);
     now = 1000; await client.completeAuthorization({ code: "fixture", state, iss: config.issuer }); assert.equal(exchanges, 1);
     await assert.rejects(client.completeAuthorization({ code: "fixture", state, iss: config.issuer }), /CALLBACK_REFUSED/);
   } finally { p.cleanup(); }

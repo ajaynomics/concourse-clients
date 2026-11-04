@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { SafeError, validOrganizationSlug } from "./http.ts";
+import { AUTHORIZATION_WINDOW_MS } from "./auth.ts";
 
 interface Pending { path: string; keys: string[]; state: string; expires: number; issuer?: string; complete(params: URLSearchParams): Promise<void>; resolve(params: URLSearchParams): void; reject(error: unknown): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 // RFC 8252: bind the IPv4 loopback listener before registering its exact redirect.
@@ -61,7 +62,7 @@ export class Loopback {
     this.port = address.port;
   }
   wait(path: "/callback" | "/setup-complete", state: string, timeoutMs: number, signal?: AbortSignal, complete: (params: URLSearchParams) => Promise<void> = async () => {}, issuer?: string): Promise<URLSearchParams> {
-    if (this.closed || this.pending || !this.port || !/^[A-Za-z0-9_-]{32,128}$/.test(state) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000) throw new SafeError("INVALID_CALLBACK_WAIT");
+    if (this.closed || this.pending || !this.port || !/^[A-Za-z0-9_-]{32,128}$/.test(state) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > AUTHORIZATION_WINDOW_MS) throw new SafeError("INVALID_CALLBACK_WAIT");
     return new Promise((resolve, reject) => {
       const cancel = () => { if (this.pending === pending) this.pending = undefined; clearTimeout(pending.timer); pending.cleanup(); reject(new SafeError("SETUP_CANCELLED")); };
       const pending: Pending = { path, keys: path === "/callback" ? ["code", "state", "iss"] : ["state", "organization"], state, expires: Date.now() + timeoutMs, issuer, complete, resolve, reject, timer: setTimeout(() => { if (this.pending === pending) this.pending = undefined; pending.cleanup(); reject(new SafeError("CALLBACK_TIMEOUT")); }, timeoutMs), cleanup: () => signal?.removeEventListener("abort", cancel) };

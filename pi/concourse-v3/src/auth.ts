@@ -27,6 +27,8 @@ export function validateConfig(c: Config): Config {
   return structuredClone(c);
 }
 interface Tokens { access: string; refresh?: string; expires: number; resource: string; clientId: string; issuer: string }
+// Long enough for a human to read, sign in and approve, possibly from another computer.
+export const AUTHORIZATION_WINDOW_MS = 15 * 60_000;
 interface Pending { state: string; verifier: string; expires: number; resource: string; clientId: string; issuer: string; redirectUri: string; fresh?: true }
 // Authentication is independently usable during onboarding; runtime identity remains strict.
 export class TokenClient {
@@ -60,7 +62,7 @@ export class TokenClient {
     if (options.fresh || !pending || pending.expires <= this.now()) {
       // Explicit sign-in supersedes the old PKCE intent, never the uncertain grant.
       // Keep its refresh/code replay fence until a new code succeeds (RFC 9700 §4.14).
-      pending = { state: randomBytes(32).toString("base64url"), verifier: randomBytes(32).toString("base64url"), expires: this.now() + 5 * 60_000, resource: this.config.origin, clientId: this.config.oauthClientId, issuer: this.config.issuer, redirectUri: this.config.auth.redirectUri, ...(options.fresh ? { fresh: true as const } : {}) };
+      pending = { state: randomBytes(32).toString("base64url"), verifier: randomBytes(32).toString("base64url"), expires: this.now() + AUTHORIZATION_WINDOW_MS, resource: this.config.origin, clientId: this.config.oauthClientId, issuer: this.config.issuer, redirectUri: this.config.auth.redirectUri, ...(options.fresh ? { fresh: true as const } : {}) };
       this.files.write("oauth-pending.json", pending);
     }
     const url = new URL(this.config.authorizationEndpoint);

@@ -79,3 +79,11 @@ test("setup-complete stays a strict separate shape and cannot consume OAuth erro
     assert.equal((await callback(listener.port, valid, { path: "/setup-complete" })).status, 200); await wait;
   } finally { await listener.close(); await wait.catch(() => {}); }
 });
+
+test("the sign-in window is fifteen minutes; longer listener waits stay refused", async () => {
+  const listener = new Loopback(); await listener.bind();
+  try {
+    assert.throws(() => listener.wait("/callback", state, 15 * 60_000 + 1), /INVALID_CALLBACK_WAIT/);
+    const wait = listener.wait("/callback", state, 15 * 60_000); void wait.catch(() => {});
+  } finally { await listener.close(); }
+});

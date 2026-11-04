@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { TokenClient, validateAuthConfig, validateConfig, type AuthConfig, type Config } from "./auth.ts";
+import { AUTHORIZATION_WINDOW_MS, TokenClient, validateAuthConfig, validateConfig, type AuthConfig, type Config } from "./auth.ts";
 import { PrivateFiles, createProfile } from "./storage.ts";
 import { SafeError, httpsUrl, json, safeFetch, onboardingIdentity, validOrganizationSlug, type AdmissionReason, type Fetch, type OrganizationChoice } from "./http.ts";
 import { Loopback } from "./loopback.ts";
@@ -144,7 +144,7 @@ export async function signup(options: SignupOptions, deps: SetupDependencies = {
     if (!files.read("tokens.json")) {
       const actionUrl = tokens.authorizationUrl(), state = new URL(actionUrl).searchParams.get("state")!;
       const pending = files.read<{ expires: number }>("oauth-pending.json")!;
-      const wait = listener.wait("/callback", state, Math.min(deps.timeoutMs ?? 300_000, Math.max(1, pending.expires - Date.now())), deps.signal, q => tokens.completeAuthorization({ code: q.get("code")!, state: q.get("state")!, iss: q.get("iss")! }), tokens.config.issuer);
+      const wait = listener.wait("/callback", state, Math.min(deps.timeoutMs ?? AUTHORIZATION_WINDOW_MS, Math.max(1, pending.expires - Date.now())), deps.signal, q => tokens.completeAuthorization({ code: q.get("code")!, state: q.get("state")!, iss: q.get("iss")! }), tokens.config.issuer);
       await action({ phase: "authorization", actionUrl }, wait);
     }
     guard(); const token = await tokens.token(); guard();
@@ -226,7 +226,7 @@ export async function login(options: { profile: string; noOpen?: boolean }, deps
     const actionUrl = tokens.authorizationUrl({ fresh: true });
     const state = new URL(actionUrl).searchParams.get("state")!;
     const pending = files.read<{ expires: number }>("oauth-pending.json")!;
-    const wait = listener.wait("/callback", state, Math.min(deps.timeoutMs ?? 300_000, Math.max(1, pending.expires - Date.now())), deps.signal, async q => {
+    const wait = listener.wait("/callback", state, Math.min(deps.timeoutMs ?? AUTHORIZATION_WINDOW_MS, Math.max(1, pending.expires - Date.now())), deps.signal, async q => {
       guard();
       await tokens.completeAuthorization({ code: q.get("code")!, state: q.get("state")!, iss: q.get("iss")! }, async access => {
         guard();

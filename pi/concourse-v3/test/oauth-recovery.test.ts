@@ -147,7 +147,7 @@ test("fresh recovery still refuses expired callbacks and changed credential/pend
     p.files.write("tokens.json", old); p.files.write("oauth-exchange.json", true);
     const client = new TokenClient(oauth, p.files, async () => assert.fail("No request permitted"), () => now);
     const fresh = client.authorizationUrl({ fresh: true });
-    now += 300_001;
+    now += 900_001;
     await assert.rejects(client.completeAuthorization(callback(fresh)), /OAUTH_CALLBACK_REFUSED/);
     p.files.write("tokens.json", { ...old, clientId: "other" });
     assert.throws(() => client.authorizationUrl({ fresh: true }), /TOKEN_BINDING_MISMATCH/);
