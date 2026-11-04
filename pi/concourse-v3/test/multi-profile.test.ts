@@ -66,7 +66,7 @@ function session(flag: string, servers: Server[]) {
 async function until(done: () => boolean) { for (let i = 0; i < 500 && !done(); i++) await new Promise(r => setTimeout(r, 5)); assert.ok(done(), "condition reached"); }
 
 function fixture(t: { after(fn: () => unknown): void }) {
-  const root = mkdtempSync(join(tmpdir(), "concourse-v3-multi-")), a = new Server(alpha, "task-a"), b = new Server(beta, "task-b");
+  const root = mkdtempSync(join(tmpdir(), "concourse-v3-multi-")), a = new Server(alpha, "00000000-0000-4000-8000-00000000000a"), b = new Server(beta, "00000000-0000-4000-8000-00000000000b");
   const paths = { a: profileDir(root, "reviews", alpha), b: profileDir(root, "notes", beta) };
   const s = session(`${paths.a},${paths.b}`, [a, b]);
   const ledger = (p: string) => { const files = new PrivateFiles(join(p, "..")); try { return new FileJournal(files).load(); } finally { files.close(); } };
@@ -78,8 +78,8 @@ test("two profiles: mail from each arrives labelled through normal follow-up, wi
   const f = fixture(t); await f.s.start();
   await until(() => f.s.sent.length === 2);
   const byProfile = Object.fromEntries(f.s.sent.map(x => [x.message.details.profile, x]));
-  assert.match(byProfile["alpha.invalid/owner/reviews"].message.content, /^\[alpha\.invalid · owner\/reviews\] A2A message from[^\n]*task-a/);
-  assert.match(byProfile["beta.invalid/writer/notes"].message.content, /^\[beta\.invalid · writer\/notes\] A2A message from[^\n]*task-b/);
+  assert.match(byProfile["alpha.invalid/owner/reviews"].message.content, /^\[alpha\.invalid · owner\/reviews\] A2A message from[^\n]*00000000-0000-4000-8000-00000000000a/);
+  assert.match(byProfile["beta.invalid/writer/notes"].message.content, /^\[beta\.invalid · writer\/notes\] A2A message from[^\n]*00000000-0000-4000-8000-00000000000b/);
   for (const x of f.s.sent) assert.deepEqual(x.options, { triggerTurn: true, deliverAs: "followUp" });
   await until(() => [...f.s.statuses.values()].every(v => v.includes("checked")) && f.s.statuses.size === 2);
   assert.match(f.s.statuses.get("concourse-v3")!, /owner\/reviews @ alpha\.invalid/);
@@ -88,15 +88,16 @@ test("two profiles: mail from each arrives labelled through normal follow-up, wi
 
 test("two profiles: a reply goes back only to the originating server; a different or missing profile writes nothing", async t => {
   const f = fixture(t); await f.s.start(); await until(() => f.s.sent.length === 2);
-  await assert.rejects(f.s.tool("reply", { task_id: "task-b", state: "TASK_STATE_COMPLETED", parts: [{ text: "x" }], profile: "alpha.invalid/owner/reviews" }), /REPLY_PROFILE_MISMATCH/);
+  await assert.rejects(f.s.tool("reply", { task_id: "00000000-0000-4000-8000-00000000000b", state: "TASK_STATE_COMPLETED", parts: [{ text: "x" }], profile: "alpha.invalid/owner/reviews" }), /REPLY_PROFILE_MISMATCH/);
   await assert.rejects(f.s.tool("send", { to: "other/peer", parts: [{ text: "x" }] }), /PROFILE_REQUIRED/);
   await assert.rejects(f.s.tool("send", { to: "other/peer", parts: [{ text: "x" }], profile: "elsewhere.invalid/x/y" }), /PROFILE_UNKNOWN/);
-  await assert.rejects(f.s.tool("reply", { task_id: "never-received", state: "TASK_STATE_COMPLETED", parts: [{ text: "x" }] }), /PROFILE_REQUIRED/);
+  await assert.rejects(f.s.tool("reply", { task_id: "never-received", state: "TASK_STATE_COMPLETED", parts: [{ text: "x" }] }), /FULL_TASK_ID_REQUIRED/);
+  await assert.rejects(f.s.tool("reply", { task_id: "00000000-0000-4000-8000-0000000000ff", state: "TASK_STATE_COMPLETED", parts: [{ text: "x" }] }), /PROFILE_REQUIRED/);
   for (const p of [f.paths.a, f.paths.b]) { const l = f.ledger(p); assert.equal(l.replies, undefined); assert.deepEqual(l.outgoing, {}); }
   assert.equal([...f.a.calls, ...f.b.calls].filter(c => c.method !== "GET").length, 0);
 
-  await f.s.tool("reply", { task_id: "task-b", state: "TASK_STATE_COMPLETED", parts: [{ text: "done" }] });
-  assert.deepEqual(f.b.calls.filter(c => c.method === "PATCH"), [{ method: "PATCH", path: "/tasks/task-b" }]);
+  await f.s.tool("reply", { task_id: "00000000-0000-4000-8000-00000000000b", state: "TASK_STATE_COMPLETED", parts: [{ text: "done" }] });
+  assert.deepEqual(f.b.calls.filter(c => c.method === "PATCH"), [{ method: "PATCH", path: "/tasks/00000000-0000-4000-8000-00000000000b" }]);
   assert.equal(f.a.calls.filter(c => c.method === "PATCH").length, 0);
   assert.equal(Object.values(f.ledger(f.paths.b).replies!)[0].phase, "accepted");
   assert.equal(f.ledger(f.paths.a).replies, undefined);
@@ -128,7 +129,7 @@ test("locks: a second session cannot take held profiles; shutdown releases every
   assert.equal(other.notes.length, 2); await assert.rejects(other.tool("check", {}), /V3_NOT_CONNECTED/);
 
   const hold = deferred<void>(); f.b.hold = hold.promise;
-  const reply = f.s.tool("reply", { task_id: "task-b", state: "TASK_STATE_WORKING" }).catch((e: Error) => e);
+  const reply = f.s.tool("reply", { task_id: "00000000-0000-4000-8000-00000000000b", state: "TASK_STATE_WORKING" }).catch((e: Error) => e);
   await f.b.reached.promise;
   const stopped = f.s.stop(); hold.resolve(); await stopped; await reply;
   assert.equal(Object.values(f.ledger(f.paths.b).replies!)[0].phase, "prepared", "no late write after release");
@@ -137,7 +138,7 @@ test("locks: a second session cannot take held profiles; shutdown releases every
 
 test("LEGACY staging and subdomains, the default profile and duplicate identities are refused; other profiles still load", async t => {
   const root = mkdtempSync(join(tmpdir(), "concourse-v3-refuse-")); t.after(() => rmSync(root, { recursive: true, force: true }));
-  const good = new Server(alpha, "task-a");
+  const good = new Server(alpha, "00000000-0000-4000-8000-00000000000a");
   const refused = [
     profileDir(root, "staging", { ...alpha, origin: "https://concourse.example.com" }),
     profileDir(root, "default", { ...alpha, agent: "other" }),
@@ -155,13 +156,13 @@ test("LEGACY staging and subdomains, the default profile and duplicate identitie
 test("fresh V3 known-organization profile receives normal follow-up and replies on its own authenticated route", async t => {
   const root = mkdtempSync(join(tmpdir(), "concourse-v3-team-"));
   const config: Config = { ...base, origin: "https://concourse.krishnan.ca", organization: "legacy", owner: "owner", agent: "operator" };
-  const server = new Server(config, "task-team"), path = profileDir(root, "operator", config);
+  const server = new Server(config, "00000000-0000-4000-8000-0000000000e0"), path = profileDir(root, "operator", config);
   const s = session(path, [server]);
   t.after(async () => { await s.stop(); rmSync(root, { recursive: true, force: true }); });
   await s.start(); await until(() => s.sent.length === 1);
   assert.deepEqual(s.notes, []);
   assert.deepEqual(s.sent[0].options, { triggerTurn: true, deliverAs: "followUp" });
   await until(() => s.statuses.get("concourse-v3")?.includes("✓ owner/operator") === true);
-  await s.tool("reply", { task_id: "task-team", state: "TASK_STATE_COMPLETED", parts: [{ text: "synthetic reply" }] });
-  assert.deepEqual(server.calls.filter(c => c.method === "PATCH"), [{ method: "PATCH", path: "/tasks/task-team" }]);
+  await s.tool("reply", { task_id: "00000000-0000-4000-8000-0000000000e0", state: "TASK_STATE_COMPLETED", parts: [{ text: "synthetic reply" }] });
+  assert.deepEqual(server.calls.filter(c => c.method === "PATCH"), [{ method: "PATCH", path: "/tasks/00000000-0000-4000-8000-0000000000e0" }]);
 });

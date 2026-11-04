@@ -1,6 +1,10 @@
 export type Fetch = typeof fetch;
+export type ErrorDetails = Record<string, string | number>;
+// Codes stay machine-stable; details carry IDs/status and the hint is plain recovery text.
 export class SafeError extends Error {
-  constructor(public readonly code: string, public readonly uncertain = false, public readonly status?: number) { super(`${code}${uncertain ? "; outcome unknown: reconcile original IDs; do not resend" : ""}`); }
+  constructor(public readonly code: string, public readonly uncertain = false, public readonly status?: number, public readonly details: ErrorDetails = {}, public readonly hint?: string) {
+    super(`${code}${Object.entries(details).map(([k, v]) => ` ${k}=${v}`).join("")}${uncertain ? "; outcome unknown: reconcile original IDs; do not resend" : ""}${hint ? `. ${hint}` : ""}`);
+  }
 }
 export function httpsUrl(value: string): URL {
   let url: URL;
@@ -43,7 +47,7 @@ function boundedFetch(origin: string, fetchImpl: Fetch, identityErrors = false):
       // Error bodies are unneeded and untrusted; keep auth/service status even if their content is oversized.
       if (!response.ok && !(identityErrors && init.method === "GET" && url.pathname === "/api/identity" && !url.search && [403, 409].includes(response.status))) {
         await response.body?.cancel().catch(() => {});
-        throw new SafeError("HTTP_REFUSED", write && response.status >= 500, response.status);
+        throw new SafeError(`HTTP_REFUSED_${response.status}`, write && response.status >= 500, response.status);
       }
       const bytes = await boundedBytes(response, identityErrors ? 32 * 1024 : 1024 * 1024);
       // Buffered responses keep SDK clones and parsing bounded, without exposing remote error text.

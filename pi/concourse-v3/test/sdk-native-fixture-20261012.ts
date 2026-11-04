@@ -33,7 +33,7 @@ export async function nativeFixture(script: Script = () => ({ text: "Synthetic t
   const secondConfig = { ...config, origin: "https://second.invalid", agent: "second" }, secondRoot = join(base, "concourse-v3", "sdk-second");
   const second = input.second ? { server: new WireFixture(secondConfig), files: (mkdirSync(secondRoot, { mode: 0o700 }), new PrivateFiles(secondRoot)), root: secondRoot } : undefined;
   if (second) {
-    second.server.current = { ...second.server.current, id: "task2" }; second.server.inbox = [structuredClone(second.server.current)];
+    second.server.current = { ...second.server.current, id: "00000000-0000-4000-8000-000000000002" }; second.server.inbox = [structuredClone(second.server.current)];
     second.files.write("config.json", secondConfig);
     second.files.write("tokens.json", { access: syntheticToken, expires: Date.now() + 3600000, resource: secondConfig.origin, clientId: config.oauthClientId, issuer: config.issuer });
   }

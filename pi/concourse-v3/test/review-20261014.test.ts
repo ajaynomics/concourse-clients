@@ -59,7 +59,7 @@ test("mailbox: hand-off keeps IDs only, recovery prunes legacy content and keeps
   assert.equal(journal.value.batches.old.phase as string, "settled");
   assert.equal(journal.value.batches.gone.messages, undefined);
   mailbox.enqueue(task()); mailbox.flush();
-  const fresh = Object.values(journal.value.batches).find(b => b.taskId === "task1")!;
+  const fresh = Object.values(journal.value.batches).find(b => b.taskId === "00000000-0000-4000-8000-000000000001")!;
   assert.equal(injected.length, 1); assert.equal(fresh.phase, "handed-off"); assert.equal(fresh.messages, undefined); assert.ok(fresh.messageIds.length);
 });
 

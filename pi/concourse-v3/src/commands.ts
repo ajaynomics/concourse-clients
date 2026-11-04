@@ -1,11 +1,11 @@
 import { openSync, closeSync, constants, fstatSync, readSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { TokenClient, validateConfig, type Config } from "./auth.ts";
-import { Client, qualifiedRecipient, validOutcome } from "./client.ts";
+import { Client, fullTaskId, qualifiedRecipient, validOutcome } from "./client.ts";
 import { PrivateFiles, FileJournal } from "./storage.ts";
 import { Outbox } from "./outgoing.ts";
 import { Replies } from "./replies.ts";
-import { SafeError, type Fetch } from "./http.ts";
+import { SafeError, type ErrorDetails, type Fetch } from "./http.ts";
 import { object, type ObjectValue, type Outcome } from "./types.ts";
 
 const options = {
@@ -33,6 +33,7 @@ export function parseCommand(argv: string[]): Command {
   if (values.status && !["SUBMITTED", "WORKING", "INPUT_REQUIRED", "COMPLETED", "CANCELED", "FAILED", "REJECTED", "AUTH_REQUIRED"].some(s => values.status === `TASK_STATE_${s}`)) throw new SafeError("INVALID_TASK_STATUS");
   for (const key of ["recipient", "agent"]) if (values[key]) qualifiedRecipient(values[key]);
   for (const key of ["task-id", "message-id"]) if (values[key] && [".", ".."].includes(values[key])) throw new SafeError("INVALID_IDENTIFIER");
+  if (values["task-id"]) fullTaskId(values["task-id"]);
   if (values.input && !isAbsolute(values.input)) throw new SafeError("ABSOLUTE_INPUT_FILE_REQUIRED");
   return { command: name, profile: values.profile, json, values };
 }
@@ -52,6 +53,7 @@ export function validatePayload(command: "send" | "reply", value: unknown): Obje
     parts(value.parts);
     if (value.expectReply !== undefined && typeof value.expectReply !== "boolean") throw new SafeError("INVALID_EXPECT_REPLY");
     for (const key of ["taskId", "contextId"]) if (value[key] !== undefined && (typeof value[key] !== "string" || !value[key].trim() || value[key].length > 2048 || [".", ".."].includes(value[key]) || /[\x00-\x1f\x7f]/.test(value[key]))) throw new SafeError("INVALID_IDENTIFIER");
+    if (value.taskId !== undefined) fullTaskId(value.taskId as string);
   } else {
     if (value.parts !== undefined) parts(value.parts);
     if (value.artifacts !== undefined) {
@@ -81,7 +83,7 @@ function payload(path: string, command: "send" | "reply"): ObjectValue {
   } finally { closeSync(fd); }
 }
 export class CommandError extends SafeError {
-  constructor(code: string, uncertain: boolean, readonly ids: Record<string, string>) { super(code, uncertain); }
+  constructor(code: string, uncertain: boolean, readonly ids: Record<string, string>, details: ErrorDetails = {}, hint?: string) { super(code, uncertain, undefined, details, hint); }
 }
 // Human mode never renders peer content or terminal controls. JSON retains the full result.
 export function commandSummary(command: string, result: unknown): string {
@@ -118,7 +120,7 @@ export async function executeCommand(argv: string[], fetchImpl: Fetch = fetch): 
       case "presence": return await client.network({ operation: "presence", agent: v.agent });
       case "receipt": return await client.network({ operation: "delivery", recipient: v.recipient, messageId: v["message-id"] });
       case "send": return await outbox.send(v.recipient, body!.parts as ObjectValue[], body!.expectReply as boolean | undefined, body!.taskId as string | undefined, body!.contextId as string | undefined);
-      case "reply": return await new Replies(journal, { reply: (...args) => { attempted = true; return client.reply(...args); } }, guard).send(v["task-id"], body as unknown as Outcome);
+      case "reply": return await new Replies(journal, { reply: (...args) => { attempted = true; return client.reply(...args); }, get: id => client.get(id) }, guard).send(v["task-id"], body as unknown as Outcome);
       case "cancel": attempted = true; return await client.cancel(v.recipient, v["task-id"]);
       case "reconcile-send": {
         await outbox.reconcile(v["message-id"]);
@@ -128,8 +130,9 @@ export async function executeCommand(argv: string[], fetchImpl: Fetch = fetch): 
     }
     } catch (e) {
       if (!["send", "reply", "cancel"].includes(p.command)) throw e;
-      const refused = e instanceof SafeError && !e.uncertain && (!!e.status && e.status < 500 || /^(SEND|REPLY)_REFUSED /.test(e.code));
-      throw new CommandError(e instanceof SafeError ? e.code : "LOCAL_WRITE_BOOKKEEPING_FAILED", attempted && !refused, ids);
+      // These codes are only raised for definite refusals: the server answered and accepted nothing.
+      const refused = e instanceof SafeError && !e.uncertain && (!!e.status && e.status < 500 || ["SEND_REFUSED", "REPLY_REFUSED", "CANCEL_REFUSED", "TASK_ALREADY_FINISHED"].includes(e.code));
+      throw e instanceof SafeError ? new CommandError(e.code, attempted && !refused, ids, e.details, e.hint) : new CommandError("LOCAL_WRITE_BOOKKEEPING_FAILED", attempted, ids);
     }
   } finally { release?.(); files.close(); }
 }

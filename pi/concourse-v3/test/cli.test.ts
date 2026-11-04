@@ -106,9 +106,9 @@ test("one-shot action parser preserves setup grammar and requires explicit bound
   const profile = "/absolute/concourse-v3/agent";
   for (const [command, flags] of [
     ["identity", []], ["find", ["--query", "review"]], ["inbox", ["--page-token", "cursor"]],
-    ["list", ["--status", "TASK_STATE_WORKING", "--page-token", "cursor"]], ["task", ["--task-id", "t1"]],
-    ["send", ["--recipient", "owner/agent", "--input", "/message.json"]], ["reply", ["--task-id", "t1", "--input", "/outcome.json"]],
-    ["cancel", ["--recipient", "owner/agent", "--task-id", "t1"]], ["presence", ["--agent", "owner/agent"]],
+    ["list", ["--status", "TASK_STATE_WORKING", "--page-token", "cursor"]], ["task", ["--task-id", "00000000-0000-4000-8000-000000000001"]],
+    ["send", ["--recipient", "owner/agent", "--input", "/message.json"]], ["reply", ["--task-id", "00000000-0000-4000-8000-000000000001", "--input", "/outcome.json"]],
+    ["cancel", ["--recipient", "owner/agent", "--task-id", "00000000-0000-4000-8000-000000000001"]], ["presence", ["--agent", "owner/agent"]],
     ["receipt", ["--recipient", "owner/agent", "--message-id", "m1"]], ["reconcile-send", ["--message-id", "m1"]],
   ] as const) {
     assert.deepEqual(parseArgs([command, "--profile", profile, ...flags, "--json"]), { command, options: { profile }, json: true, piArgs: [] });

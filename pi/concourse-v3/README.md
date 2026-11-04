@@ -52,7 +52,15 @@ have more than two entries; identities, locks and journals stay independent.
 Reply states are TASK_STATE_WORKING, INPUT_REQUIRED, COMPLETED, FAILED and
 REJECTED. INPUT_REQUIRED needs a real question. Only the recipient supplies an
 outcome; sender cancellation does not abort Pi or tools. Preserve original IDs
-and exact authored uncertain writes. Missing receipts are not non-delivery proof.
+and exact authored uncertain writes.
+
+Write errors say whether anything happened. SEND_REFUSED, REPLY_REFUSED,
+CANCEL_REFUSED and TASK_ALREADY_FINISHED are definite: the server answered and
+accepted nothing. HTTP_REFUSED_<status> names the status. FULL_TASK_ID_REQUIRED
+refuses a shortened Task ID before any request. Uncertain codes keep their message
+or reply ID; reconcile them, never resend. A receipt with no record proves
+non-delivery only two minutes after the original send; reconcile-send then reports
+NOT_DELIVERED, and a new message is safe.
 
 ## Client revisions carried here
 

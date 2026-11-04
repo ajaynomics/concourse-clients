@@ -23,8 +23,8 @@ test("duplicate reads/hints do not offer the same caller IDs twice; every WORKIN
 
 test("several Tasks can queue independently without execution ownership or settlement", () => {
   const f = deliveryFixture();
-  f.delivery.enqueue(task()); f.delivery.enqueue({ ...task("TASK_STATE_WORKING", ["m2"]), id: "task2" }); f.delivery.flush();
-  assert.equal(f.injected.length, 2); assert.deepEqual(f.injected.map(m => details(m).taskId), ["task1", "task2"]);
+  f.delivery.enqueue(task()); f.delivery.enqueue({ ...task("TASK_STATE_WORKING", ["m2"]), id: "00000000-0000-4000-8000-000000000002" }); f.delivery.flush();
+  assert.equal(f.injected.length, 2); assert.deepEqual(f.injected.map(m => details(m).taskId), ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"]);
 });
 
 test("input artifacts, causal IDs and authenticated caller labeling survive a hand-off", () => {
@@ -38,8 +38,8 @@ test("restart does not replay a possible hand-off, nor block unrelated new mail"
   const f = deliveryFixture(); const b = f.delivery.enqueue(task())!;
   f.journal.value.batches[b.id].phase = "uncertain";
   const m = new Mailbox(f.journal, f.boundary, "session1"); m.recover(); m.flush(); assert.equal(f.injected.length, 0);
-  m.enqueue({ ...task("TASK_STATE_WORKING", ["m2"]), id: "task2" }); m.flush();
-  assert.equal(f.injected.length, 1); assert.equal(details(f.injected[0]).taskId, "task2");
+  m.enqueue({ ...task("TASK_STATE_WORKING", ["m2"]), id: "00000000-0000-4000-8000-000000000002" }); m.flush();
+  assert.equal(f.injected.length, 1); assert.equal(details(f.injected[0]).taskId, "00000000-0000-4000-8000-000000000002");
 });
 
 test("provably uninjected same-session queue survives restart with original IDs", () => {
@@ -52,7 +52,7 @@ test("new consumer/session cannot inject old-session queued mail", () => {
   const f = deliveryFixture(); f.delivery.enqueue(task()); f.state.sessionId = "replacement";
   assert.throws(() => f.delivery.flush(), /SESSION_REPLACED/);
   const m = new Mailbox(f.journal, f.boundary, "replacement"); m.recover(); m.flush(); assert.equal(f.injected.length, 0);
-  m.enqueue({ ...task("TASK_STATE_WORKING", ["m2"]), id: "task2" }); m.flush(); assert.equal(f.injected.length, 1);
+  m.enqueue({ ...task("TASK_STATE_WORKING", ["m2"]), id: "00000000-0000-4000-8000-000000000002" }); m.flush(); assert.equal(f.injected.length, 1);
 });
 
 test("write failure before hand-off cannot inject, and uncertain injection never retries automatically", () => {

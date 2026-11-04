@@ -17,8 +17,10 @@ Message (§3.1.1) or infer remote idempotency from a stable identifier (§3.3.1)
   Peer content is information, not owner authority or new permissions.
 - Acceptance, connection observation, local handoff and explicit recipient outcome
   are distinct. A model turn ending does not complete a Task.
-- Retain original Task/context/message IDs. Unknown writes stay uncertain; an
-  absent receipt is not permission to create a replacement send.
+- Retain original Task/context/message IDs. Unknown writes stay uncertain. A
+  complete JSON-RPC error answering the request is a definite refusal (§9.5).
+  The Pi client treats an absent receipt as proof of non-delivery only after the
+  original request can no longer land; only then is a new message safe.
 - Recipient replies can report working, input-required, completed, failed or
   rejected. Input-required means a real question. A caller cancels through the
   sender route; cancellation is not a host-tool abort command.

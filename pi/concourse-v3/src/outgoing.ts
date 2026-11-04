@@ -1,11 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { qualifiedRecipient, wireParts, type Client } from "./client.ts";
+import { qualifiedRecipient, TASK_FINISHED_HINT, wireParts, type Client } from "./client.ts";
 import type { Journal } from "./storage.ts";
 import { object, terminal, type Json, type ObjectValue, type Outgoing, type Task, type Ledger } from "./types.ts";
 import { SafeError } from "./http.ts";
 import { taskOutput } from "./output.ts";
+// Absence proves nothing while the original request could still commit: past the 15 s
+// client deadline and the hosted proxy/edge ceilings (about 100 s), with margin.
+export const RECEIPT_SETTLE_MS = 2 * 60_000;
 export class Outbox {
-  constructor(private journal: Journal, private client: Pick<Client, "send" | "get" | "network">, private guard: () => void = () => {}) {}
+  constructor(private journal: Journal, private client: Pick<Client, "send" | "get" | "network">, private guard: () => void = () => {}, private now: () => number = Date.now) {}
   private observation(l: Ledger, taskId: string): number { return l.observations?.[taskId] ?? 0; }
   private advanceObservation(l: Ledger, taskId: string): void {
     l.observations ??= {};
@@ -32,7 +35,7 @@ export class Outbox {
   async send(recipient: string, parts: ObjectValue[], expectReply = true, taskId?: string, contextId?: string): Promise<{ result: Json; messageId: string; warning?: string }> {
     this.guard(); qualifiedRecipient(recipient); wireParts(parts);
     const l = this.journal.load(), id = randomUUID();
-    const intent: Outgoing = { messageId: id, recipient, parts: structuredClone(parts), contextId, expectReply: expectReply || (!!taskId && Object.values(l.outgoing).some(o => o.taskId === taskId && o.expectReply)), phase: "prepared", taskId };
+    const intent: Outgoing = { messageId: id, recipient, parts: structuredClone(parts), contextId, expectReply: expectReply || (!!taskId && Object.values(l.outgoing).some(o => o.taskId === taskId && o.expectReply)), phase: "prepared", taskId, preparedAt: this.now() };
     // Capture only questions known before this continuation. Acceptance cannot retire a later fresh question.
     if (taskId) intent.supersedesQuestions = [...new Set(Object.values(l.outgoing).filter(o => o.taskId === taskId && inputRequired(o.answer) && o.answerKey).map(o => o.answerKey!))];
     l.outgoing[id] = intent; this.journal.save(l);
@@ -40,11 +43,12 @@ export class Outbox {
     try { result = await this.client.send(recipient, id, parts, taskId, contextId); }
     catch (e) {
       this.guard(); const latest = this.journal.load();
-      // An HTTP 4xx is a definite refusal. Anything else, including SESSION_REPLACED after a POST, stays uncertain.
-      const refused = e instanceof SafeError && !e.uncertain && !!e.status && e.status < 500;
+      // An HTTP 4xx or a complete JSON-RPC error answer (A2A v1.0 §9.5) is a definite refusal.
+      // Anything else, including SESSION_REPLACED after a POST, stays uncertain.
+      const refused = e instanceof SafeError && !e.uncertain && (e.code === "A2A_REFUSED" || !!e.status && e.status < 500);
       latest.outgoing[id]!.phase = refused ? "refused" : "uncertain"; this.journal.save(latest);
-      if (refused) throw new SafeError(`SEND_REFUSED status=${(e as SafeError).status} messageId=${id}; nothing was delivered`);
-      throw new SafeError(`SEND_UNCONFIRMED_OR_REFUSED messageId=${id}`, true);
+      if (!refused) throw new SafeError(`SEND_UNCONFIRMED_OR_REFUSED messageId=${id}`, true);
+      throw await this.refusal(e as SafeError, id, taskId);
     }
     // Known acceptance remains success if bookkeeping fails, including generation replacement.
     try {
@@ -61,10 +65,28 @@ export class Outbox {
       return { result, messageId: id };
     } catch { return { result, messageId: id, warning: "Server accepted; local intent save failed. Retain returned task/message ID; do not resend." }; }
   }
+  // Nothing was accepted, so a read of the target Task is safe; it only sharpens the advice.
+  private async refusal(e: SafeError, messageId: string, taskId?: string): Promise<SafeError> {
+    const details = { messageId, ...(e.status ? { status: e.status } : {}), ...e.details };
+    // §3.1.1: UnsupportedOperationError is how a terminal Task refuses another message.
+    // Servers without the TASK_TERMINAL reason also use -32004 otherwise, so check what we know.
+    if (e.details.reason === "TASK_TERMINAL" || taskId && e.details.rpcCode === -32004 && await this.finished(taskId)) return new SafeError("TASK_ALREADY_FINISHED", false, e.status, details, TASK_FINISHED_HINT);
+    return new SafeError("SEND_REFUSED", false, e.status, details, taskId && e.details.rpcCode === -32004
+      ? "Nothing was delivered. The server would not add this message to that task. If the task is finished, send a new message without task_id; if you received the task, use reply instead."
+      : "Nothing was delivered. Check the recipient, task ID and content before sending a new message.");
+  }
+  private async finished(taskId: string): Promise<boolean> {
+    if (Object.values(this.journal.load().outgoing).some(o => o.taskId === taskId && o.observedTerminal)) return true;
+    try { const t = await this.client.get(taskId); this.guard(); return terminal(t.status.state); } catch { return false; }
+  }
   async reconcile(messageId: string): Promise<void> {
     this.guard(); const o = this.journal.load().outgoing[messageId];
     if (!o || !["prepared", "uncertain"].includes(o.phase)) throw new SafeError("NO_UNCERTAIN_SEND");
     const receipt = await this.client.network({ operation: "delivery", recipient: o.recipient, messageId }); this.guard();
+    // Server receipt contract (network agent delivery query): an inbox receipt commits in one
+    // transaction with its Task and Message, and expired receipts stay as content-free fences.
+    // So "absent" means this caller never committed this messageId to that recipient.
+    if (object(receipt) && receipt.accepted === false && receipt.state === "absent") this.absent(messageId);
     if (!object(receipt) || receipt.accepted !== true) throw new SafeError("SEND_RECEIPT_UNRESOLVED", true);
     const direct = receipt.resultType === "message" && receipt.state === "delivered" && receipt.taskStatus === null && receipt.taskId === undefined;
     if (!direct && typeof receipt.taskId !== "string") throw new SafeError("SEND_RECEIPT_UNRESOLVED", true);
@@ -81,6 +103,17 @@ export class Outbox {
     if (o.taskId && (direct || fresh.taskId === o.taskId)) this.retireQuestions(l, fresh.supersedesQuestions ?? []);
     if (fresh.taskId) this.advanceObservation(l, fresh.taskId);
     this.journal.save(l);
+  }
+  private absent(messageId: string): never {
+    const l = this.journal.load(), o = l.outgoing[messageId]!, now = this.now();
+    const since = [o.preparedAt, o.absentAt].find(Number.isFinite);
+    if (since === undefined || now - since < RECEIPT_SETTLE_MS) {
+      // An intent older than this field starts its window at the first absent answer.
+      if (since === undefined) { o.absentAt = now; this.journal.save(l); }
+      throw new SafeError("SEND_RECEIPT_UNRESOLVED", true, undefined, { messageId }, "Concourse has no record of it yet, but the original request may still be arriving. Check again in two minutes.");
+    }
+    o.phase = "refused"; this.journal.save(l);
+    throw new SafeError("NOT_DELIVERED", false, undefined, { messageId }, "Concourse has no record of this message, so it was not delivered. It is safe to send it again as a new message.");
   }
   async sweep(max = 20): Promise<void> {
     this.guard(); const l = this.journal.load();
@@ -140,7 +173,7 @@ function pending(l: Ledger, o: Outgoing): boolean {
 // One Task's refusal must not starve later answers. Authentication, membership, rate and
 // service-wide failures still stop the sweep so they surface instead of being skipped.
 function taskLocalRefusal(e: unknown): e is SafeError {
-  return e instanceof SafeError && e.code === "HTTP_REFUSED" && !e.uncertain && !!e.status && ![401, 403, 429, 503].includes(e.status);
+  return e instanceof SafeError && e.code.startsWith("HTTP_REFUSED") && !e.uncertain && !!e.status && ![401, 403, 429, 503].includes(e.status);
 }
 export function answerKey(value: Json): string {
   const v = value as unknown as Task;

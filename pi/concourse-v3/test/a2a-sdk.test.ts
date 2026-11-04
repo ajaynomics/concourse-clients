@@ -19,10 +19,10 @@ test("real a2aSDK1.3 JSONRPC emits v1/header/security card and immediate Task wi
   value.history![0].parts = [{ text: "Retained input" }, { mediaType: "application/json", data: { nested: { evidence: [1, 2] } } }];
   f.server.rpcResult = { task: value };
   const parts: ObjectValue[] = [{ text: "Decisive Unicode input λ" }, { data: { input: [1, { exact: true }] } }];
-  assert.deepEqual(await f.client.send("other/sender", "stable-message-id", parts, "task1", "context1"), value);
+  assert.deepEqual(await f.client.send("other/sender", "stable-message-id", parts, "00000000-0000-4000-8000-000000000001", "context1"), value);
   const post = f.server.calls.find(c => c.method === "POST")!;
   assert.equal(post.body.params.message.messageId, "stable-message-id");
-  assert.equal(post.body.params.message.taskId, "task1"); assert.equal(post.body.params.message.contextId, "context1");
+  assert.equal(post.body.params.message.taskId, "00000000-0000-4000-8000-000000000001"); assert.equal(post.body.params.message.contextId, "context1");
   assert.equal(post.body.params.message.role, "ROLE_USER");
   assert.deepEqual(post.body.params.message.parts, [{ text: parts[0].text, mediaType: "text/plain" }, { data: parts[1].data, mediaType: "application/json" }]);
   assert.deepEqual(post.body.params.configuration.acceptedOutputModes, ["text/plain", "application/json"]);

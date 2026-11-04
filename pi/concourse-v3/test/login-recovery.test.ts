@@ -106,7 +106,7 @@ for (const mismatch of ["owner", "organization", "handle", "oauth_client_id", "r
       }, { fetchImpl }), 1);
       assert.equal(await browser, 400); assert.equal(posts, 1); f.assertPreserved(); await f.assertReleased();
       assert.doesNotMatch(output.join("\n"), /synthetic-private|synthetic-new/);
-      assert.equal(JSON.parse(output.at(-1)!).error, mismatch === "failed" ? "HTTP_REFUSED" : "V3_IDENTITY_REFUSED");
+      assert.equal(JSON.parse(output.at(-1)!).error, mismatch === "failed" ? "HTTP_REFUSED_500" : "V3_IDENTITY_REFUSED");
     } finally { f.cleanup(); }
   });
 }

@@ -9,6 +9,23 @@ export function qualifiedRecipient(recipient: string): string {
   if (!new RegExp(RECIPIENT_PATTERN).test(recipient)) throw new SafeError("QUALIFIED_RECIPIENT_REQUIRED: use owner/agent, not a URL");
   return recipient;
 }
+// Concourse Task IDs are UUIDs. A shortened ID can only miss or name another Task.
+export function fullTaskId(id: string): string {
+  if (typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new SafeError("FULL_TASK_ID_REQUIRED", false, undefined, {}, "Use the task's full ID exactly as shown, for example 123e4567-e89b-42d3-a456-426614174000, not a shortened one.");
+  return id;
+}
+export const TASK_FINISHED_HINT = "That task is finished. Send a new message without task_id to start a new task.";
+// A2A v1.0 §9.5: a well-formed JSON-RPC error object answering OUR request id is the
+// server's definite refusal, so nothing was accepted. Anything less stays uncertain.
+// Only the numeric code and a google.rpc.ErrorInfo reason are kept, never server text.
+export function rpcRefusal(rpc: { id: unknown; body: unknown } | undefined, code: string, hint?: string): SafeError | undefined {
+  if (!rpc || (typeof rpc.id !== "string" && typeof rpc.id !== "number")) return;
+  const b = rpc.body;
+  if (!object(b) || b.jsonrpc !== "2.0" || b.id !== rpc.id || "result" in b || !object(b.error) || !Number.isSafeInteger(b.error.code) || typeof b.error.message !== "string") return;
+  const info = Array.isArray(b.error.data) ? b.error.data.find(d => object(d) && d["@type"] === "type.googleapis.com/google.rpc.ErrorInfo") : undefined;
+  const reason = object(info) && typeof info.reason === "string" && /^[A-Z][A-Z0-9_]{0,62}$/.test(info.reason) ? info.reason : undefined;
+  return new SafeError(code, false, undefined, { rpcCode: b.error.code as number, ...(reason ? { reason } : {}) }, hint);
+}
 export function wireParts(parts: ObjectValue[]) {
   return parts.map(p => {
     if (typeof p.text === "string") return { content: { $case: "text" as const, value: p.text }, metadata: undefined, filename: "", mediaType: "text/plain" };
@@ -86,7 +103,7 @@ export class Client {
     await this.identity();
     const { client, wire } = await this.connect(recipient);
     const request: SendMessageRequest = { tenant: "", metadata: undefined, configuration: { returnImmediately: true, historyLength: 0, acceptedOutputModes: ["text/plain", "application/json"], taskPushNotificationConfig: undefined }, message: { messageId, taskId: taskId ?? "", contextId: contextId ?? "", role: Role.ROLE_USER, metadata: undefined, extensions: [], referenceTaskIds: [], parts: outbound } };
-    try { await client.sendMessage(request); this.check(); } catch (e) { if (e instanceof SafeError) throw e; throw new SafeError("A2A_SEND_UNCONFIRMED", true); }
+    try { await client.sendMessage(request); this.check(); } catch (e) { if (e instanceof SafeError) throw e; throw rpcRefusal(wire.rpc(), "A2A_REFUSED") ?? new SafeError("A2A_SEND_UNCONFIRMED", true); }
     this.check(); const result = wire();
     if (!object(result)) throw new SafeError("INVALID_A2A_RESPONSE", true);
     if (object(result.task)) return result.task;
@@ -95,7 +112,7 @@ export class Client {
   }
   async cancel(recipient: string, id: string): Promise<Json> {
     await this.identity(); const { client, wire } = await this.connect(recipient);
-    try { await client.cancelTask({ tenant: "", id, metadata: undefined }); } catch (e) { if (e instanceof SafeError) throw e; throw new SafeError("A2A_CANCEL_REFUSED_OR_UNKNOWN", true); }
+    try { await client.cancelTask({ tenant: "", id, metadata: undefined }); } catch (e) { if (e instanceof SafeError) throw e; throw rpcRefusal(wire.rpc(), "CANCEL_REFUSED", "The server refused to cancel it, so the task was not changed.") ?? new SafeError("A2A_CANCEL_REFUSED_OR_UNKNOWN", true); }
     // A2A §3.1.5 returns the requested Task's updated state, not proof of completed cancellation.
     let value: Task;
     try { value = task(wire()); } catch { throw new SafeError("INVALID_CANCEL_RESPONSE", true); }
@@ -115,7 +132,7 @@ export class Client {
     // CLI help/install share validation code before npm dependencies exist.
     const { ClientFactory, DefaultAgentCardResolver, JsonRpcTransportFactory } = await import("@a2a-js/sdk/client");
     const base = `${this.config.origin}/a2a/${[this.config.organization, ...recipient.split("/")].map(encodeURIComponent).join("/")}`;
-    let wire: unknown;
+    let wire: unknown, rpc: { id: unknown; body: unknown } | undefined;
     const authFetch: Fetch = async (url, init = {}) => {
       this.check(); const token = await this.getToken(); this.check();
       // Never follow an arbitrary card-selected path with this bearer, even on the same host.
@@ -123,13 +140,17 @@ export class Client {
       if (![base, `${base}/`, `${base}/.well-known/agent-card.json`].includes(u.href)) throw new SafeError("A2A_CARD_DESTINATION_REFUSED");
       const headers = new Headers(init.headers); headers.set("authorization", `Bearer ${token}`);
       const r = await this.fetch(url, { ...init, headers }); this.check();
-      if (init.method?.toUpperCase() === "POST") { const b = await json(r.clone()); this.check(); if (object(b)) wire = b.result; }
+      if (init.method?.toUpperCase() === "POST") {
+        const b = await json(r.clone()); this.check(); if (object(b)) wire = b.result;
+        let id: unknown; try { id = JSON.parse(String(init.body)).id; } catch { /* no id: never a matching error response */ }
+        rpc = { id, body: b };
+      }
       return r;
     };
     const resolver = new DefaultAgentCardResolver({ fetchImpl: authFetch });
     const card = await resolver.resolve(`${base}/`); this.check();
     if (!card.supportedInterfaces.length || card.supportedInterfaces.some(i => i.protocolVersion !== "1.0" || i.protocolBinding !== "JSONRPC" || ![base, `${base}/`].includes(i.url))) throw new SafeError("A2A_CARD_VERSION_OR_DESTINATION_REFUSED");
     const client = await new ClientFactory({ transports: [new JsonRpcTransportFactory({ fetchImpl: authFetch })], clientConfig: { polling: true }, cardResolver: resolver, preferredTransports: ["JSONRPC"] }).createFromAgentCard(card);
-    this.check(); return { client, wire: () => wire };
+    this.check(); return { client, wire: Object.assign(() => wire, { rpc: () => rpc }) };
   }
 }

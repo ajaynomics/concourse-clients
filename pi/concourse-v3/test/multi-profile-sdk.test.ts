@@ -7,7 +7,7 @@ test("real Pi SDK holds two profiles: each mail is labelled and the reply return
   let replied = false;
   const f = await nativeFixture(context => {
     // Reply once the second server's mail is in the conversation; routing comes from that profile's ledger.
-    if (!replied && JSON.stringify(context).includes("task2")) { replied = true; return { calls: [toolCall("concourse_v3_reply", { task_id: "task2", state: "TASK_STATE_COMPLETED", parts: [{ text: "Answer for the second server" }] })] }; }
+    if (!replied && JSON.stringify(context).includes("00000000-0000-4000-8000-000000000002")) { replied = true; return { calls: [toolCall("concourse_v3_reply", { task_id: "00000000-0000-4000-8000-000000000002", state: "TASK_STATE_COMPLETED", parts: [{ text: "Answer for the second server" }] })] }; }
     return { text: "No reply" };
   }, { second: true });
   t.after(() => f.cleanup());

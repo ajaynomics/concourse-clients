@@ -29,9 +29,9 @@ async function assertStaleOperations(f: Fixture) {
   const beforeCalls = f.server.calls.length, before = readFileSync(join(f.root, "ledger.json"));
   for (const [name, params] of [
     ["send", { to: "other/sender", parts: [{ text: "must not publish" }] }],
-    ["reply", { task_id: "task1", state: "TASK_STATE_COMPLETED" }],
-    ["cancel", { to: "other/sender", task_id: "task1" }],
-    ["get", { task_id: "task1" }], ["find", {}], ["check", {}],
+    ["reply", { task_id: "00000000-0000-4000-8000-000000000001", state: "TASK_STATE_COMPLETED" }],
+    ["cancel", { to: "other/sender", task_id: "00000000-0000-4000-8000-000000000001" }],
+    ["get", { task_id: "00000000-0000-4000-8000-000000000001" }], ["find", {}], ["check", {}],
   ] as const) await assert.rejects(execute(f, name, params), stale);
   assert.equal(f.server.calls.length, beforeCalls, "no new HTTP after ownership loss");
   assert.deepEqual(readFileSync(join(f.root, "ledger.json")), before, "no stale ledger mutation");
@@ -50,11 +50,11 @@ for (const operation of ["send", "reply"] as const) {
       return originalWrite.call(this, name, value);
     });
     try {
-      const accepted = { id: "task1", contextId: "context1", status: { state: "TASK_STATE_COMPLETED" }, artifacts: [{ artifactId: "accepted-artifact", parts: [{ text: "known accepted body" }] }] };
+      const accepted = { id: "00000000-0000-4000-8000-000000000001", contextId: "context1", status: { state: "TASK_STATE_COMPLETED" }, artifacts: [{ artifactId: "accepted-artifact", parts: [{ text: "known accepted body" }] }] };
       f.server.rpcResult = { task: accepted };
       const result = await execute(f, operation, operation === "send"
         ? { to: "other/sender", parts: [{ text: "authored request" }] }
-        : { task_id: "task1", state: "TASK_STATE_COMPLETED", artifacts: [{ parts: [{ text: "known accepted body" }] }] });
+        : { task_id: "00000000-0000-4000-8000-000000000001", state: "TASK_STATE_COMPLETED", artifacts: [{ parts: [{ text: "known accepted body" }] }] });
       assert.equal(faulted, true);
       const { result: receipt } = result.structuredContent as unknown as { result: { result?: unknown; task?: { id: string; artifacts: unknown[] }; messageId?: string; warning: string } };
       assert.match(receipt.warning, /Server accepted; local .*save failed/);
@@ -64,9 +64,9 @@ for (const operation of ["send", "reply"] as const) {
         const intent = f.journal.load().outgoing[receipt.messageId!];
         assert.equal(intent.phase, "prepared"); assert.deepEqual(intent.parts, [{ text: "authored request" }]);
       } else {
-        assert.equal(receipt.task!.id, "task1"); assert.deepEqual(receipt.task!.artifacts, [{ artifactId: "server-art-0", parts: [{ text: "known accepted body" }] }]);
+        assert.equal(receipt.task!.id, "00000000-0000-4000-8000-000000000001"); assert.deepEqual(receipt.task!.artifacts, [{ artifactId: "server-art-0", parts: [{ text: "known accepted body" }] }]);
         const intent = Object.values(f.journal.load().replies!)[0];
-        assert.equal(intent.phase, "prepared"); assert.equal(intent.taskId, "task1");
+        assert.equal(intent.phase, "prepared"); assert.equal(intent.taskId, "00000000-0000-4000-8000-000000000001");
         assert.deepEqual(intent.outcome.artifacts, [{ parts: [{ text: "known accepted body" }] }]);
       }
       assert.match(result.content.filter(c => c.type === "text").map(c => c.text).join("\n"), /known accepted body/);
@@ -100,7 +100,7 @@ test("registered send/reply unknown HTTP responses still throw, never fabricate 
       if (args[0] === "PATCH") throw new SafeError("HTTP_TRANSPORT_FAILED", true);
       return value;
     });
-    await assert.rejects(execute(f, "reply", { task_id: "task1", state: "TASK_STATE_COMPLETED" }), (e: unknown) => e instanceof SafeError && e.uncertain && /REPLY_UNCONFIRMED/.test(e.code));
+    await assert.rejects(execute(f, "reply", { task_id: "00000000-0000-4000-8000-000000000001", state: "TASK_STATE_COMPLETED" }), (e: unknown) => e instanceof SafeError && e.uncertain && /REPLY_UNCONFIRMED/.test(e.code));
     assert.deepEqual(Object.values(f.journal.load().outgoing).map(o => o.phase), ["uncertain"]);
     assert.deepEqual(Object.values(f.journal.load().replies!).map(o => o.phase), ["uncertain"]);
     assert.equal(f.server.calls.filter(c => c.method === "POST" || c.method === "PATCH").length, 2);

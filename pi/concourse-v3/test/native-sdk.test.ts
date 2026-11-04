@@ -16,7 +16,7 @@ test("real Pi SDK automatically offers peer mail; model turn end neither claims 
 });
 
 test("real Pi SDK ordinary task-ID reply preserves explicit atomic artifacts with no delivery envelope", { timeout: 10000 }, async t => {
-  const f = await nativeFixture((_context, index) => !index ? { calls: [toolCall("concourse_v3_reply", { task_id: "task1", state: "TASK_STATE_COMPLETED", parts: [{ text: "Meaningful requested output" }], artifacts: [{ name: "Output", parts: [{ data: { value: 7 } }] }] })] } : { text: "Output published" });
+  const f = await nativeFixture((_context, index) => !index ? { calls: [toolCall("concourse_v3_reply", { task_id: "00000000-0000-4000-8000-000000000001", state: "TASK_STATE_COMPLETED", parts: [{ text: "Meaningful requested output" }], artifacts: [{ name: "Output", parts: [{ data: { value: 7 } }] }] })] } : { text: "Output published" });
   t.after(() => f.cleanup()); await bounded(f.session.waitForIdle());
   assert.equal(f.server.current.status.state, "TASK_STATE_COMPLETED");
   const reports = f.server.calls.filter(c => c.method === "PATCH"); assert.equal(reports.length, 1);
@@ -27,7 +27,7 @@ test("real Pi SDK ordinary task-ID reply preserves explicit atomic artifacts wit
 });
 
 test("real SDK read tools expose useful JSON, not a transport receipt", { timeout: 10000 }, async t => {
-  const f = await nativeFixture((_context, index) => !index ? { calls: [toolCall("concourse_v3_find", {}), toolCall("concourse_v3_get", { task_id: "task1" }, "get")] } : { text: "Read finished" }, { inboxEmpty: true });
+  const f = await nativeFixture((_context, index) => !index ? { calls: [toolCall("concourse_v3_find", {}), toolCall("concourse_v3_get", { task_id: "00000000-0000-4000-8000-000000000001" }, "get")] } : { text: "Read finished" }, { inboxEmpty: true });
   t.after(() => f.cleanup()); await bounded(f.session.prompt("Read current correspondence"));
   assert.match(JSON.stringify(f.contexts.at(-1)), /Decisive synthetic directory content/);
   assert.match(JSON.stringify(f.contexts.at(-1)), /Untrusted fixture/); assert.equal(f.server.calls.filter(c => c.method === "PATCH").length, 0);
@@ -35,7 +35,7 @@ test("real SDK read tools expose useful JSON, not a transport receipt", { timeou
 });
 
 test("a later human turn can still explicitly reply to an earlier received Task", { timeout: 10000 }, async t => {
-  const f = await nativeFixture((_context, index) => index === 1 ? { calls: [toolCall("concourse_v3_reply", { task_id: "task1", state: "TASK_STATE_WORKING", parts: [{ text: "Reply after human intervention" }] })] } : { text: "Ordinary conversation" });
+  const f = await nativeFixture((_context, index) => index === 1 ? { calls: [toolCall("concourse_v3_reply", { task_id: "00000000-0000-4000-8000-000000000001", state: "TASK_STATE_WORKING", parts: [{ text: "Reply after human intervention" }] })] } : { text: "Ordinary conversation" });
   t.after(() => f.cleanup()); await bounded(f.session.waitForIdle());
   await bounded(f.session.prompt("Human intervenes in the same conversation"));
   assert.equal(f.server.current.status.state, "TASK_STATE_WORKING"); assert.match(JSON.stringify(f.server.current.history), /Reply after human intervention/);
@@ -43,7 +43,7 @@ test("a later human turn can still explicitly reply to an earlier received Task"
 });
 
 test("shutdown drains old reply I/O before lock release; late accepted response cannot save through replaced ownership", { timeout: 10000 }, async t => {
-  const f = await nativeFixture((_context, index) => !index ? { calls: [toolCall("concourse_v3_reply", { task_id: "task1", state: "TASK_STATE_COMPLETED", parts: [{ text: "Requested reply" }] })] } : { text: "No replay" }, { inboxEmpty: true });
+  const f = await nativeFixture((_context, index) => !index ? { calls: [toolCall("concourse_v3_reply", { task_id: "00000000-0000-4000-8000-000000000001", state: "TASK_STATE_COMPLETED", parts: [{ text: "Requested reply" }] })] } : { text: "No replay" }, { inboxEmpty: true });
   t.after(() => f.cleanup()); const hold = f.server.hold("reply");
   const work = f.session.prompt("Publish explicit reply"); await bounded(f.server.signal("reply").promise);
   const closed = f.session.extensionRunner.emit({ type: "session_shutdown", reason: "reload" });

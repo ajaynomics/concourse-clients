@@ -23,7 +23,7 @@ test("artifact-only completion queues only fresh output, while explicit get reta
   const stamp = "2026-10-16T20:00:00.000Z";
   f.server.current = { ...question, status: { ...question.status, state: "TASK_STATE_WORKING", timestamp: stamp }, metadata: { "concourse.output": { statusTimestamp: stamp, messageIds: [], artifactIds: [] } } };
   f.server.rpcResult = { task: f.server.current };
-  next = toolCall("concourse_v3_send", { to: "other/sender", task_id: "task1", parts: [{ text: "Answer to question-1" }] });
+  next = toolCall("concourse_v3_send", { to: "other/sender", task_id: "00000000-0000-4000-8000-000000000001", parts: [{ text: "Answer to question-1" }] });
   await bounded(f.session.prompt("Provide the requested input"));
   const before = f.observed.length;
   f.server.current = { ...f.server.current, status: { ...f.server.current.status, state: "TASK_STATE_COMPLETED" }, artifacts: [...question.artifacts, { artifactId: "new-artifact", parts: [{ text: "FRESH_ARTIFACT_RESULT" }] }], metadata: { "concourse.output": { statusTimestamp: stamp, messageIds: [], artifactIds: ["new-artifact"] } } };
@@ -36,7 +36,7 @@ test("artifact-only completion queues only fresh output, while explicit get reta
   await f.session.prompt("/concourse-v3 refresh"); await bounded(f.session.waitForIdle());
   assert.equal(f.observed.length, before + 1, "no repeated handoff");
 
-  next = toolCall("concourse_v3_get", { task_id: "task1" });
+  next = toolCall("concourse_v3_get", { task_id: "00000000-0000-4000-8000-000000000001" });
   await bounded(f.session.prompt("Read the full Task explicitly"));
   const read = f.session.messages.find(m => m.role === "toolResult" && m.toolName === "concourse_v3_get");
   assert.ok(read?.role === "toolResult"); assert.equal(read.isError, false);

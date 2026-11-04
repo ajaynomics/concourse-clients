@@ -60,7 +60,7 @@ test("oversized identity is fatal authentication uncertainty rather than per-Tas
 test("HTTP 401 and 503 remain fatal even when their unneeded error bodies exceed the content cap", async () => {
   for (const status of [401, 503]) {
     const f = fixture(); f.refuse(status);
-    await assert.rejects(f.outbox.sweep(), (e: unknown) => e instanceof SafeError && e.code === "HTTP_REFUSED" && e.status === status);
+    await assert.rejects(f.outbox.sweep(), (e: unknown) => e instanceof SafeError && e.code === `HTTP_REFUSED_${status}` && e.status === status);
     assert.deepEqual(f.reads, ["a-large"]);
     assert.equal(f.journal.value.blockedAnswers, undefined);
     assert.equal(f.journal.value.cursors.answers, undefined);

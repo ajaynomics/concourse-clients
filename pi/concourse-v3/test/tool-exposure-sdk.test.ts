@@ -9,12 +9,12 @@ text(ALL_TOOLS.filter(t => t.name.startsWith("concourse_v3_")).map(t => t.name).
 text(await describeTool("concourse_v3_reply"));
 text(await searchTools("concourse_v3_reply", { limit: 20 }));
 `;
-const reply = { task_id: "task1", state: "TASK_STATE_COMPLETED", parts: [{ text: "Requested result via codemode" }] };
+const reply = { task_id: "00000000-0000-4000-8000-000000000001", state: "TASK_STATE_COMPLETED", parts: [{ text: "Requested result via codemode" }] };
 
 for (const toolLoadout of ["codemode", "restored"] as const) {
   test(`SDK ${toolLoadout} loadout: v3 tools remain discoverable and callable without changing active selection`, { timeout: 10000 }, async t => {
     const code = `${discovery}
-text(await tools.concourse_v3_get({ task_id: "task1" }));
+text(await tools.concourse_v3_get({ task_id: "00000000-0000-4000-8000-000000000001" }));
 text(await tools.concourse_v3_reply(${JSON.stringify(reply)}));`;
     const f = await nativeFixture((_ctx, index) => !index ? { calls: [toolCall("codemode", { code })] } : { text: "Done" }, { inboxEmpty: true, toolLoadout });
     t.after(() => f.cleanup());
@@ -63,7 +63,7 @@ catch (e) { text("EXCLUDED: " + e.message); }`;
 }
 
 test("standalone SDK without codemode retains default direct Concourse tools", { timeout: 10000 }, async t => {
-  const f = await nativeFixture((_ctx, index) => !index ? { calls: [toolCall("concourse_v3_get", { task_id: "task1" })] } : { text: "Done" }, { inboxEmpty: true });
+  const f = await nativeFixture((_ctx, index) => !index ? { calls: [toolCall("concourse_v3_get", { task_id: "00000000-0000-4000-8000-000000000001" })] } : { text: "Done" }, { inboxEmpty: true });
   t.after(() => f.cleanup());
   assert.deepEqual(f.session.getActiveToolNames().sort(), names);
   assert.deepEqual(f.session.getActiveToolNames(), f.activeBeforeBind);
@@ -76,7 +76,7 @@ test("standalone SDK without codemode retains default direct Concourse tools", {
 });
 
 test("fresh codemode-only session keeps v3 tools hidden in the actual model transcript", { timeout: 10000 }, async t => {
-  const code = 'text(await tools.concourse_v3_get({ task_id: "task1" }));';
+  const code = 'text(await tools.concourse_v3_get({ task_id: "00000000-0000-4000-8000-000000000001" }));';
   const f = await nativeFixture((_ctx, index) => !index ? { calls: [toolCall("codemode", { code })] } : { text: "Done" }, { inboxEmpty: true, toolLoadout: "only" });
   t.after(() => f.cleanup());
   await bounded(f.session.prompt("Use only codemode"));

@@ -119,8 +119,8 @@ export async function main(argv = process.argv.slice(2), run: Run = runProcess, 
     finally { process.off("SIGINT", cancel); process.off("SIGTERM", cancel); }
   } catch (e) {
     const code = e instanceof SafeError ? e.code : "LOCAL_PROFILE_OR_INSTALL_REFUSED";
-    const recovery = recoveryInstructions(code);
-    const ids = e instanceof CommandError ? e.ids : {};
+    const recovery = recoveryInstructions(code) ?? (e instanceof SafeError ? e.hint : undefined);
+    const ids = { ...(e instanceof CommandError ? e.ids : {}), ...(e instanceof SafeError ? e.details : {}) };
     output(machine ? JSON.stringify({ phase: "blocked", error: code, uncertain: e instanceof SafeError && e.uncertain, ...ids, ...(recovery ? { recovery } : {}) }) : `${code}${Object.keys(ids).length ? ` ${JSON.stringify(ids)}` : ""}${e instanceof SafeError && e.uncertain ? "; outcome unknown, do not retry writes or re-register" : ""}${recovery ? `\n${recovery}` : ""}`);
     return 1;
   }

@@ -8,7 +8,7 @@ test("one over-limit Task cannot starve valid mail or requested output", { timeo
   t.after(() => f.cleanup());
   const huge = { ...task(), id: "oversized-task" }; huge.history![0].parts = [{ text: "x".repeat(300000) }];
   f.server.inbox = [{ ...task("TASK_STATE_WORKING", ["fresh-mail"]), id: "valid-task" }, huge];
-  const l = f.journal.load(); l.outgoing.original = { messageId: "original", recipient: "other/sender", taskId: "task1", phase: "accepted", expectReply: true }; f.journal.save(l);
+  const l = f.journal.load(); l.outgoing.original = { messageId: "original", recipient: "other/sender", taskId: "00000000-0000-4000-8000-000000000001", phase: "accepted", expectReply: true }; f.journal.save(l);
   f.server.current = answer("actual-result");
   await f.session.prompt("/concourse-v3 refresh"); await bounded(f.session.waitForIdle());
   assert.match(JSON.stringify(f.contexts), /A2A message from [^"]*task valid-task/);

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { RECIPIENT_PATTERN } from "./src/client.ts";
+import { fullTaskId, RECIPIENT_PATTERN } from "./src/client.ts";
 import { DELIVERY_TYPE } from "./src/delivery.ts";
 import { SafeError, type Fetch } from "./src/http.ts";
 import type { ObjectValue } from "./src/types.ts";
@@ -123,17 +123,20 @@ export function install(pi: ExtensionAPI, fetchImpl: Fetch = fetch): void {
     tools.push(definition); pi.registerTool(definition);
   }
   const s = () => Type.String({ minLength: 1, maxLength: 2048 });
+  const taskId = () => Type.String({ minLength: 1, maxLength: 2048, description: "Full task ID exactly as shown, never shortened" });
+  // A shortened ID is refused before any intent is journaled or request is sent.
+  const full = (id: unknown) => id === undefined ? undefined : fullTaskId(id as string);
   const handle = () => Type.String({ pattern: RECIPIENT_PATTERN, maxLength: 2048, description: "Agent handle owner/agent, e.g. ajent/reviews (not a URL)" });
   tool("find", "Discover permitted agents", { query: Type.Optional(s()) }, (r, p) => r.client.find(p.query as string | undefined), true);
-  tool("send", "Send ordinary A2A correspondence. Write in plain, human-friendly language for a mixed audience (people and agents, technical or not). Stable intent survives uncertainty; don't resend unknown writes. expect_reply=false suppresses unrequested terminal replies, not genuine input questions.", { to: handle(), parts: Type.Array(Type.Record(Type.String(), Type.Unknown()), { minItems: 1, maxItems: 100 }), expect_reply: Type.Optional(Type.Boolean()), task_id: Type.Optional(s()), context_id: Type.Optional(s()) }, (r, p) => r.outbox.send(p.to as string, p.parts as ObjectValue[], p.expect_reply !== false, p.task_id as string | undefined, p.context_id as string | undefined));
-  tool("get", "Read visible Task with raw history/artifacts", { task_id: s() }, (r, p) => r.client.get(p.task_id as string), true);
+  tool("send", "Send ordinary A2A correspondence. Write in plain, human-friendly language for a mixed audience (people and agents, technical or not). Stable intent survives uncertainty; don't resend unknown writes. expect_reply=false suppresses unrequested terminal replies, not genuine input questions.", { to: handle(), parts: Type.Array(Type.Record(Type.String(), Type.Unknown()), { minItems: 1, maxItems: 100 }), expect_reply: Type.Optional(Type.Boolean()), task_id: Type.Optional(taskId()), context_id: Type.Optional(s()) }, async (r, p) => r.outbox.send(p.to as string, p.parts as ObjectValue[], p.expect_reply !== false, full(p.task_id), p.context_id as string | undefined));
+  tool("get", "Read visible Task with raw history/artifacts", { task_id: taskId() }, async (r, p) => r.client.get(full(p.task_id)!), true);
   tool("list", "Read one bounded visible Task page", { page_token: Type.Optional(s()), status: Type.Optional(s()) }, (r, p) => r.client.list({ ...(p.page_token ? { pageToken: p.page_token as string } : {}), ...(p.status ? { status: p.status as string } : {}) }), true);
   tool("check", "Check mail; incoming messages use Pi's normal follow-up queue", {}, async r => { await r.refresh(); return { checked: true }; }, true);
-  tool("cancel", "Sender CancelTask; never aborts Pi or tools", { to: handle(), task_id: s() }, (r, p) => r.client.cancel(p.to as string, p.task_id as string));
-  tool("reply", "Reply to a received Task in plain, human-friendly language for a mixed audience; no active Pi delivery is required. Set explicit outcome; no obligatory ACK, no CANCELED, no automatic completion on turn end. Goes back through the profile that received the Task.", { task_id: s(), state: Type.Union([Type.Literal("TASK_STATE_COMPLETED"), Type.Literal("TASK_STATE_FAILED"), Type.Literal("TASK_STATE_REJECTED"), Type.Literal("TASK_STATE_INPUT_REQUIRED"), Type.Literal("TASK_STATE_WORKING")]), parts: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()), { maxItems: 100 })), artifacts: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()), { maxItems: 20 })) }, (r, p) => {
+  tool("cancel", "Sender CancelTask; never aborts Pi or tools", { to: handle(), task_id: taskId() }, async (r, p) => r.client.cancel(p.to as string, full(p.task_id)!));
+  tool("reply", "Reply to a received Task in plain, human-friendly language for a mixed audience; no active Pi delivery is required. Set explicit outcome; no obligatory ACK, no CANCELED, no automatic completion on turn end. Goes back through the profile that received the Task.", { task_id: taskId(), state: Type.Union([Type.Literal("TASK_STATE_COMPLETED"), Type.Literal("TASK_STATE_FAILED"), Type.Literal("TASK_STATE_REJECTED"), Type.Literal("TASK_STATE_INPUT_REQUIRED"), Type.Literal("TASK_STATE_WORKING")]), parts: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()), { maxItems: 100 })), artifacts: Type.Optional(Type.Array(Type.Record(Type.String(), Type.Unknown()), { maxItems: 20 })) }, (r, p) => {
     return r.replies.send(p.task_id as string, { state: p.state as string, parts: p.parts as ObjectValue[] | undefined, artifacts: p.artifacts as ObjectValue[] | undefined });
-  }, false, p => replier(p.task_id as string, p.profile as string | undefined));
+  }, false, p => replier(full(p.task_id)!, p.profile as string | undefined));
   tool("presence", "Network-agent presence query; connection is not readiness", { agent: s() }, (r, p) => r.client.network({ operation: "presence", agent: p.agent as string }), true);
-  tool("receipt", "Delivery query for original send; never replace an uncertain message", { message_id: s(), task_id: Type.Optional(s()), recipient: Type.Optional(s()) }, (r, p) => r.client.network({ operation: "delivery", messageId: p.message_id as string, ...(p.task_id ? { taskId: p.task_id as string } : { recipient: p.recipient as string }) }), true);
+  tool("receipt", "Delivery query for original send; never replace an uncertain message", { message_id: s(), task_id: Type.Optional(taskId()), recipient: Type.Optional(s()) }, async (r, p) => r.client.network({ operation: "delivery", messageId: p.message_id as string, ...(p.task_id ? { taskId: full(p.task_id)! } : { recipient: p.recipient as string }) }), true);
 }
 export default function (pi: ExtensionAPI): void { install(pi); }
