@@ -119,6 +119,18 @@ test("rpcRefusal keeps only the numeric code and a well-formed ErrorInfo reason"
   assert.equal(rpcRefusal({ id: undefined, body: { jsonrpc: "2.0", error: { code: 1, message: "m" } } }, "X"), undefined);
 });
 
+// Shapes copied from the server's A2a::Error#to_h and A2a::RelayError.
+test("only pre-commit codes are refusals; errors after a saved write stay uncertain", () => {
+  const body = (error: object) => ({ id: 7, body: { jsonrpc: "2.0", id: 7, error } });
+  const terminal = { code: -32004, message: "Task is already in a terminal state; send a new message without a task ID to start a new task", data: [...errorInfo("UNSUPPORTED_OPERATION"), ...errorInfo("TASK_TERMINAL", "concourse.krishnan.ca")] };
+  assert.deepEqual(rpcRefusal(body(terminal), "X")!.details, { rpcCode: -32004, reason: "TASK_TERMINAL" });
+  const waitLimit = { code: -32603, message: "Internal error", data: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "RELAY_WAIT_LIMIT", domain: "concourse.example.com", metadata: { taskId: "123e4567-e89b-42d3-a456-426614174000" } }] };
+  assert.equal(rpcRefusal(body(waitLimit), "X"), undefined);
+  assert.equal(rpcRefusal(body({ code: -32603, message: "Internal error" }), "X"), undefined);
+  assert.equal(rpcRefusal(body({ code: -32050, message: "custom" }), "X"), undefined);
+  assert.equal(rpcRefusal(body({ code: -32001, message: "m", data: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "X", domain: "d", metadata: { deliveryId: "d1" } }] }), "X"), undefined);
+});
+
 test("an absent receipt proves non-delivery only after the original request could have landed", async () => {
   const journal = new Memory(); let now = 1_000_000, sends = 0;
   let receipt: Json = { operation: "delivery", state: "absent", accepted: false };

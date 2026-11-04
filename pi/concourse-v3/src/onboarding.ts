@@ -33,7 +33,7 @@ export interface SignupOptions { profile: string; origin?: string; agent?: strin
 export interface SetupDependencies { fetchImpl?: Fetch; emit?(event: SetupEvent): void; open?(url: string): Promise<void>; signal?: AbortSignal; timeoutMs?: number }
 // A browser on another computer cannot reach this host's loopback listener; the human
 // pastes the failed page's address back and the agent replays it locally (RFC 8252 §7.3).
-export const REMOTE_BROWSER = "If your browser is on another computer and ends on a page that will not load, copy that page's full address and give it to the agent, which runs: script/concourse-v3 callback --url '<address>'";
+export const REMOTE_BROWSER = "If your browser is on another computer and ends on a page that will not load, copy that page's full address and give it to the agent within 10 minutes of approving. The agent runs: script/concourse-v3 callback --url '<address>'";
 const AUTHORIZATION_INSTRUCTIONS = `Open this link and approve. ${REMOTE_BROWSER}`;
 
 function exactOrigin(origin: string): void { if (typeof origin !== "string" || origin.length > 2048 || httpsUrl(origin).origin !== origin) throw new SafeError("EXPECTED_EXACT_ORIGIN"); }

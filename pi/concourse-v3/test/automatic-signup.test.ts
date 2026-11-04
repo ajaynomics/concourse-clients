@@ -350,7 +350,7 @@ for (const reason of ["awaiting_approval", "declined"]) test(`CLI ${reason} refu
   } finally { f.cleanup(); }
 });
 
-const AUTHORIZATION_TEXT = "Open this link and approve. If your browser is on another computer and ends on a page that will not load, copy that page's full address and give it to the agent, which runs: script/concourse-v3 callback --url '<address>'";
+const AUTHORIZATION_TEXT = "Open this link and approve. If your browser is on another computer and ends on a page that will not load, copy that page's full address and give it to the agent within 10 minutes of approving. The agent runs: script/concourse-v3 callback --url '<address>'";
 // The agent-first CLI: join drives signup and the browser hands back through callback.
 async function joinCli(f: ReturnType<typeof fixture>, extra: string[] = [], deps: Partial<SetupDependencies> = {}) {
   const { main } = await import("../cli.ts");

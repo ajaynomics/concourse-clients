@@ -15,15 +15,25 @@ export function fullTaskId(id: string): string {
   return id;
 }
 export const TASK_FINISHED_HINT = "That task is finished. Send a new message without task_id to start a new task.";
-// A2A v1.0 §9.5: a well-formed JSON-RPC error object answering OUR request id is the
-// server's definite refusal, so nothing was accepted. Anything less stays uncertain.
-// Only the numeric code and a google.rpc.ErrorInfo reason are kept, never server text.
+// A2A v1.0 §9.5: a well-formed JSON-RPC error answering OUR request id is a definite
+// refusal only for codes Concourse raises before it saves anything (§5.4 table).
+// -32603, unknown codes and any error naming a task/delivery (RELAY_WAIT_LIMIT,
+// RELAY_DELIVERY_*) can follow a committed write, so they stay uncertain.
+const PRE_COMMIT_CODES = new Set([-32700, -32600, -32601, -32602, -32001, -32002, -32003, -32004, -32005, -32009]);
+// Concourse's own detail follows the spec's ErrorInfo under this fixed domain.
+const CONCOURSE_DOMAIN = "concourse.krishnan.ca";
+const errorInfo = (d: unknown): d is ObjectValue => object(d) && d["@type"] === "type.googleapis.com/google.rpc.ErrorInfo";
+const reasonName = (v: unknown) => typeof v === "string" && /^[A-Z][A-Z0-9_]{0,62}$/.test(v) ? v : undefined;
+// Only the numeric code and ErrorInfo reasons are kept, never server text.
 export function rpcRefusal(rpc: { id: unknown; body: unknown } | undefined, code: string, hint?: string): SafeError | undefined {
   if (!rpc || (typeof rpc.id !== "string" && typeof rpc.id !== "number")) return;
   const b = rpc.body;
   if (!object(b) || b.jsonrpc !== "2.0" || b.id !== rpc.id || "result" in b || !object(b.error) || !Number.isSafeInteger(b.error.code) || typeof b.error.message !== "string") return;
-  const info = Array.isArray(b.error.data) ? b.error.data.find(d => object(d) && d["@type"] === "type.googleapis.com/google.rpc.ErrorInfo") : undefined;
-  const reason = object(info) && typeof info.reason === "string" && /^[A-Z][A-Z0-9_]{0,62}$/.test(info.reason) ? info.reason : undefined;
+  if (!PRE_COMMIT_CODES.has(b.error.code as number)) return;
+  const infos = Array.isArray(b.error.data) ? b.error.data.filter(errorInfo) : [];
+  if (infos.some(i => object(i.metadata) && ("taskId" in i.metadata || "deliveryId" in i.metadata))) return;
+  const own = infos.find(i => i.domain === CONCOURSE_DOMAIN && reasonName(i.reason));
+  const reason = reasonName(own?.reason) ?? reasonName(infos[0]?.reason);
   return new SafeError(code, false, undefined, { rpcCode: b.error.code as number, ...(reason ? { reason } : {}) }, hint);
 }
 export function wireParts(parts: ObjectValue[]) {
