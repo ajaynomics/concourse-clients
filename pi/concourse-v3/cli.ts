@@ -6,11 +6,13 @@ import { validateConfig, type Config } from "./src/auth.ts";
 import { PrivateFiles } from "./src/storage.ts";
 import { SafeError } from "./src/http.ts";
 import { doctor, signup, login, type SignupOptions, type SetupEvent, type SetupDependencies } from "./src/onboarding.ts";
+import { deliverCallback } from "./src/callback.ts";
 import { CommandError, commandSummary, executeCommand, isAction, parseCommand, type Action } from "./src/commands.ts";
 
 export const packageRoot = dirname(fileURLToPath(import.meta.url));
 const HELP = `Concourse v3 (Linux, Node >=24; repository-local qualified Pi)
 script/concourse-v3 install
+script/concourse-v3 callback --url 'http://127.0.0.1:PORT/callback?...' [--json]
 script/concourse-v3 signup --origin https://concourse.krishnan.ca --profile /absolute/path/concourse-v3/my-agent --agent my-agent [--oauth-client-id PUBLIC_UID] [--organization SLUG] [--no-open] [--json]
 script/concourse-v3 signup --profile /absolute/path/concourse-v3/my-agent --resume [--organization SLUG] [--no-open] [--json]
 script/concourse-v3 login --profile /absolute/path/concourse-v3/my-agent [--no-open] [--json]
@@ -24,29 +26,32 @@ Message example: {"parts":[{"text":"Question"}],"expectReply":true}
 Outcome example: {"state":"TASK_STATE_COMPLETED","parts":[{"text":"Answer"}]}
 Input is a regular JSON file, max 256 KiB; unknown fields are refused. Reads fetch one bounded page, never poll.
 Actions require an unused configured profile; they never start Pi. Exit 1 means refused/unknown; never replay an uncertain write.
+Signup and login wait up to 15 minutes for a human to approve in a browser. If the browser is on another computer, its final page will not load; the human copies that page's full address and the agent runs callback --url on this computer while signup is still waiting. Callback needs no profile and never prints the address.
 Fresh signup uses the issuer's separate automatic LEGACY native-registration contract at the canonical V3 origin. It requires the supporting issuer release and an eligible human account. --oauth-client-id selects existing operator-provisioned compatibility instead. Ordinary legacy DCR is never used. Signup never imports a legacy profile or changes a resumed client. A browser handles login/consent and verified web admission; a token or public UID cannot grant membership. JSON action URLs can be opened by a human or agent. Organization choice exits 2; resume with an explicit membership. Unknown writes are not retried.`;
-export interface Parsed { command: "install" | "signup" | "login" | "doctor" | "start" | "help" | Action; options: SignupOptions; json: boolean; piArgs: string[] }
-export function parseArgs(argv: string[]): Parsed {
+export interface Parsed { command: "install" | "signup" | "login" | "doctor" | "start" | "callback" | "help" | Action; options: SignupOptions; json: boolean; piArgs: string[]; url?: string }
+export function parseArgs(argv: string[], home = process.env.HOME): Parsed {
   const command = argv[0] ?? "help";
   if (isAction(command)) { const p = parseCommand(argv); return { command, options: { profile: p.profile }, json: p.json, piArgs: [] }; }
   if (command === "--help" || command === "help") return { command: "help", options: { profile: "" }, json: false, piArgs: [] };
-  if (!["install", "signup", "login", "doctor", "start"].includes(command)) throw new SafeError("UNKNOWN_CLI_COMMAND");
+  if (!["install", "signup", "login", "doctor", "start", "callback"].includes(command)) throw new SafeError("UNKNOWN_CLI_COMMAND");
   const result: Parsed = { command: command as Parsed["command"], options: { profile: "" }, json: false, piArgs: [] };
   const seen = new Set<string>();
   for (let i = 1; i < argv.length; i++) {
     const key = argv[i];
     if (key === "--" && command === "start") { result.piArgs = argv.slice(i + 1); break; }
     if (seen.has(key)) throw new SafeError("DUPLICATE_CLI_OPTION"); seen.add(key);
-    const allowed = command === "signup" ? ["--origin", "--profile", "--agent", "--oauth-client-id", "--organization", "--resume", "--no-open", "--json"] : command === "login" ? ["--profile", "--no-open", "--json"] : command === "doctor" ? ["--profile", "--json"] : command === "start" ? ["--profile"] : [];
+    const allowed = command === "signup" ? ["--origin", "--profile", "--agent", "--oauth-client-id", "--organization", "--resume", "--no-open", "--json"] : command === "callback" ? ["--url", "--json"] : command === "login" ? ["--profile", "--no-open", "--json"] : command === "doctor" ? ["--profile", "--json"] : command === "start" ? ["--profile"] : [];
     if (!allowed.includes(key)) throw new SafeError("INVALID_CLI_OPTION");
     if (key === "--json") result.json = true;
     else if (key === "--resume") result.options.resume = true;
     else if (key === "--no-open") result.options.noOpen = true;
     else {
       const value = argv[++i]; if (!value || value.startsWith("--") || value.length > 4096 || /[\x00-\x1f\x7f]/.test(value)) throw new SafeError("MISSING_OR_INVALID_OPTION_VALUE");
+      if (key === "--url") { result.url = value; continue; }
       const property = (key === "--oauth-client-id" ? "oauthClientId" : key.slice(2)) as "profile" | "origin" | "agent" | "oauthClientId" | "organization"; result.options[property] = value;
     }
   }
+  if (command === "callback") { if (!result.url) throw new SafeError("CALLBACK_URL_REQUIRED"); return result; }
   if (command !== "install" && !result.options.profile) throw new SafeError("EXPLICIT_PROFILE_REQUIRED");
   if (command === "signup" && !result.options.resume && (!result.options.origin || !result.options.agent)) throw new SafeError("SIGNUP_ORIGIN_AND_AGENT_REQUIRED");
   if (command === "signup" && result.options.resume && result.options.oauthClientId !== undefined) throw new SafeError("RESUME_CLIENT_OVERRIDE_REFUSED");
@@ -91,7 +96,7 @@ function npmCli(): string {
 function human(event: SetupEvent): string {
   if (event.phase === "complete") return `Configured ${event.identity.organization}/${event.identity.owner}/${event.identity.agent}\n${event.configPath}`;
   if (event.phase === "organization_choice") return `Choose an organization and resume with --organization SLUG:\n${event.organizations.map(o => `${o.slug}: ${o.name}`).join("\n")}`;
-  return `${event.phase === "authorization" ? "Open this URL for login and consent:" : event.instructions}\n${event.actionUrl}`;
+  return `${event.instructions}\n${event.actionUrl}`;
 }
 function recoveryInstructions(code: string): string | undefined {
   if (code === "AGENT_AWAITING_APPROVAL") return "Ask an organization owner to approve this agent in Concourse organization settings. After approval, run script/concourse-v3 signup --profile /absolute/path/to/same-profile --resume --organization SLUG. Keep the same profile and client; do not register again.";
@@ -113,9 +118,12 @@ export async function main(argv = process.argv.slice(2), run: Run = runProcess, 
     if (p.command === "install") { const plan = installPlan(npmCli()); return run(plan.command, plan.args, plan.cwd); }
     if (p.command === "start") { const plan = startPlan(p.options.profile, p.piArgs); return run(plan.command, plan.args); }
     if (p.command === "doctor") { const result = await doctor(p.options.profile, deps.fetchImpl); output(machine ? JSON.stringify(result) : `Healthy: ${result.identity.organization}/${result.identity.owner}/${result.identity.agent}`); return 0; }
+    if (p.command === "callback") { await deliverCallback(p.url!); output(machine ? JSON.stringify({ phase: "complete", command: "callback", accepted: true }) : "Callback accepted. The waiting signup continues."); return 0; }
     const controller = new AbortController(), cancel = () => controller.abort();
     process.once("SIGINT", cancel); process.once("SIGTERM", cancel);
-    try { return await (p.command === "login" ? login : signup)(p.options, { ...deps, signal: deps.signal ? AbortSignal.any([deps.signal, controller.signal]) : controller.signal, emit: e => output(machine ? JSON.stringify(e) : human(e)), open: deps.open ?? openBrowser }) === "complete" ? 0 : 2; }
+    const setup = { ...deps, signal: deps.signal ? AbortSignal.any([deps.signal, controller.signal]) : controller.signal, emit: (e: SetupEvent) => output(machine ? JSON.stringify(e) : human(e)), open: deps.open ?? openBrowser };
+    const o = p.options;
+    try { return await ((p.command === "login" ? login : signup)(o, setup)) === "complete" ? 0 : 2; }
     finally { process.off("SIGINT", cancel); process.off("SIGTERM", cancel); }
   } catch (e) {
     const code = e instanceof SafeError ? e.code : "LOCAL_PROFILE_OR_INSTALL_REFUSED";

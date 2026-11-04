@@ -24,12 +24,16 @@ export type Draft = DraftFields & (
   { version: 3; registration: "registered"; oauthClientId: string }
 );
 export type SetupEvent =
-  | { phase: "authorization"; actionUrl: string }
+  | { phase: "authorization"; actionUrl: string; instructions: string }
   | { phase: "web_admission"; actionUrl: string; reason?: AdmissionReason; instructions: string }
   | { phase: "organization_choice"; error: string; organizations: OrganizationChoice[] }
   | { phase: "complete"; identity: { origin: string; organization: string; owner: string; agent: string }; configPath: string };
 export interface SignupOptions { profile: string; origin?: string; agent?: string; oauthClientId?: string; resume?: boolean; organization?: string; noOpen?: boolean }
 export interface SetupDependencies { fetchImpl?: Fetch; emit?(event: SetupEvent): void; open?(url: string): Promise<void>; signal?: AbortSignal; timeoutMs?: number }
+// A browser on another computer cannot reach this host's loopback listener; the human
+// pastes the failed page's address back and the agent replays it locally (RFC 8252 §7.3).
+export const REMOTE_BROWSER = "If your browser is on another computer and ends on a page that will not load, copy that page's full address and give it to the agent, which runs: script/concourse-v3 callback --url '<address>'";
+const AUTHORIZATION_INSTRUCTIONS = `Open this link and approve. ${REMOTE_BROWSER}`;
 
 function exactOrigin(origin: string): void { if (typeof origin !== "string" || origin.length > 2048 || httpsUrl(origin).origin !== origin) throw new SafeError("EXPECTED_EXACT_ORIGIN"); }
 function validateMetadata(v: Metadata): Metadata {
@@ -145,7 +149,7 @@ export async function signup(options: SignupOptions, deps: SetupDependencies = {
       const actionUrl = tokens.authorizationUrl(), state = new URL(actionUrl).searchParams.get("state")!;
       const pending = files.read<{ expires: number }>("oauth-pending.json")!;
       const wait = listener.wait("/callback", state, Math.min(deps.timeoutMs ?? AUTHORIZATION_WINDOW_MS, Math.max(1, pending.expires - Date.now())), deps.signal, q => tokens.completeAuthorization({ code: q.get("code")!, state: q.get("state")!, iss: q.get("iss")! }), tokens.config.issuer);
-      await action({ phase: "authorization", actionUrl }, wait);
+      await action({ phase: "authorization", actionUrl, instructions: AUTHORIZATION_INSTRUCTIONS }, wait);
     }
     guard(); const token = await tokens.token(); guard();
     let result = await onboardingIdentity(d.origin, token, options.organization ?? d.identity?.organization, fetchImpl); guard();
@@ -159,8 +163,8 @@ export async function signup(options: SignupOptions, deps: SetupDependencies = {
     if (result.status !== 200) {
       const reason = result.status === 403 ? result.reason : undefined;
       const instructions = reason === "awaiting_approval"
-        ? "Ask an organization owner to approve this agent in Concourse organization settings. Approval alone does not finish setup. Then open or reload this URL, choose your organization, and click Continue in terminal while this command is running."
-        : "Open this URL and sign in to Concourse. Obtain organization membership if needed, choose your organization, and click Continue in terminal. Approval alone does not finish setup.";
+        ? `Ask an organization owner to approve this agent in Concourse organization settings. Approval alone does not finish setup. Then open or reload this URL, choose your organization, and click Continue in terminal while this command is running. ${REMOTE_BROWSER}`
+        : `Open this URL and sign in to Concourse. Obtain organization membership if needed, choose your organization, and click Continue in terminal. Approval alone does not finish setup. ${REMOTE_BROWSER}`;
       const state = randomBytes(32).toString("base64url");
       const actionUrl = `${d.origin}/developer/setup?${new URLSearchParams({ port: String(listener.port), state })}`;
       const wait = listener.wait("/setup-complete", state, deps.timeoutMs ?? 600_000, deps.signal);
@@ -238,7 +242,7 @@ export async function login(options: { profile: string; noOpen?: boolean }, deps
       guard();
     }, config.issuer);
     void wait.catch(() => {});
-    deps.emit?.({ phase: "authorization", actionUrl }); guard();
+    deps.emit?.({ phase: "authorization", actionUrl, instructions: AUTHORIZATION_INSTRUCTIONS }); guard();
     if (!options.noOpen) { await deps.open?.(actionUrl); guard(); }
     await wait; guard();
     deps.emit?.({ phase: "complete", identity: { origin: config.origin, organization: config.organization, owner: config.owner, agent: config.agent }, configPath: `${options.profile}/config.json` });

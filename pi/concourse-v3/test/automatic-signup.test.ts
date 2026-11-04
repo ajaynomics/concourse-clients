@@ -349,3 +349,37 @@ for (const reason of ["awaiting_approval", "declined"]) test(`CLI ${reason} refu
     assert.equal(f.calls.some(path => path.endsWith("/api/card")), false);
   } finally { f.cleanup(); }
 });
+
+const AUTHORIZATION_TEXT = "Open this link and approve. If your browser is on another computer and ends on a page that will not load, copy that page's full address and give it to the agent, which runs: script/concourse-v3 callback --url '<address>'";
+test("authorization events tell the human how to hand back a remote browser's address", async () => {
+  const f = fixture();
+  try {
+    assert.equal(await signup(f.options, f.deps), "complete");
+    const event = f.events.find(e => e.phase === "authorization")!;
+    assert.equal(event.phase === "authorization" && event.instructions, AUTHORIZATION_TEXT);
+    const admission = f.events.find(e => e.phase === "web_admission")!;
+    assert.match(admission.phase === "web_admission" ? admission.instructions : "", /callback --url/);
+  } finally { f.cleanup(); }
+});
+
+test("remote browser: the agent pastes the failed loopback address and signup completes once", async () => {
+  const { main } = await import("../cli.ts");
+  const f = fixture(), pasted: string[] = [];
+  try {
+    // The browser is elsewhere, so it reaches nothing; the human copies its final address.
+    const open = async (url: string) => {
+      const action = new URL(url);
+      const target = action.origin === EXPECTED_ISSUER
+        ? new URL(`${action.searchParams.get("redirect_uri")}?${new URLSearchParams({ code: "synthetic-code", state: action.searchParams.get("state")!, iss: EXPECTED_ISSUER })}`)
+        : (f.state.admitted = true, new URL(`http://127.0.0.1:${action.searchParams.get("port")}/setup-complete?${new URLSearchParams({ state: action.searchParams.get("state")!, organization: "example-team" })}`));
+      const output: string[] = [];
+      assert.equal(await main(["callback", "--url", target.href, "--json"], async () => { assert.fail("No process spawn"); }, line => output.push(line)), 0);
+      pasted.push(output[0]);
+    };
+    assert.equal(await signup(f.options, { ...f.deps, open }), "complete");
+    assert.deepEqual(pasted.map(line => JSON.parse(line)), [{ phase: "complete", command: "callback", accepted: true }, { phase: "complete", command: "callback", accepted: true }]);
+    assert.ok(!pasted.join("\n").includes("synthetic-code"));
+    assert.equal(f.calls.filter(path => path.endsWith("/oauth/token")).length, 1);
+    assert.equal(f.calls.filter(path => path === endpoint).length, 1);
+  } finally { f.cleanup(); }
+});
