@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Outbox } from "../src/outgoing.ts";
 import { SafeError } from "../src/http.ts";
+import { TaskReadError } from "../src/client.ts";
 import { answer, deferred, Memory, task } from "./helpers.ts";
 import type { Json, Task } from "../src/types.ts";
 
@@ -18,7 +19,7 @@ test("unavailable middle Task cannot starve later answers or lose intent across 
   const client = {
     send: async () => task() as unknown as Json,
     network: async () => ({}),
-    get: async (id: string) => { reads.push(id); if (id === "b") throw new SafeError("HTTP_REFUSED", false, 404); return id === "c" ? output({ ...answer(), id }, ["a1"], ["art1"]) : { ...task("TASK_STATE_WORKING"), id }; },
+    get: async (id: string) => { reads.push(id); if (id === "b") throw new TaskReadError(new SafeError("HTTP_REFUSED", false, 404)); return id === "c" ? output({ ...answer(), id }, ["a1"], ["art1"]) : { ...task("TASK_STATE_WORKING"), id }; },
   };
   await new Outbox(journal, client).sweep(2);
   assert.deepEqual(reads, ["a", "b"]); assert.equal(journal.value.cursors.answers, "b");

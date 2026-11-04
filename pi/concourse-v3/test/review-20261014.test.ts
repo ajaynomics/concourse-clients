@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Client } from "../src/client.ts";
+import { Client, TaskReadError } from "../src/client.ts";
 import { doorbell } from "../src/doorbell.ts";
 import { Outbox } from "../src/outgoing.ts";
 import { Replies } from "../src/replies.ts";
@@ -31,12 +31,12 @@ test("send: a definite HTTP 4xx is recorded as refused; other failures stay unce
 test("sweep: one Task's persistent server error does not starve later answers; auth stays fatal", async () => {
   const journal = new Memory(), reads: string[] = []; let fail = 500;
   for (const taskId of ["a-broken", "b-fine"]) journal.value.outgoing[`send-${taskId}`] = { messageId: `send-${taskId}`, taskId, recipient: "owner/peer", phase: "accepted", resultType: "task", expectReply: true };
-  const outbox = new Outbox(journal, { send: async () => ({}), network: async () => ({}), get: async (id: string): Promise<Task> => { reads.push(id); if (id === "a-broken") throw status(fail); return { ...answer(), id }; } });
+  const outbox = new Outbox(journal, { send: async () => ({}), network: async () => ({}), get: async (id: string): Promise<Task> => { reads.push(id); if (id === "a-broken") throw new TaskReadError(status(fail)); return { ...answer(), id }; } });
   await outbox.sweep(); await outbox.sweep();
   assert.deepEqual(journal.value.blockedAnswers, { "a-broken": { code: "HTTP_500" } });
   assert.equal(outbox.offers().length, 1); assert.equal(outbox.offers()[0].taskId, "b-fine");
   assert.deepEqual(reads, ["a-broken", "b-fine", "a-broken"], "the cursor advances past the failing Task");
-  for (fail of [401, 403, 429, 503]) await assert.rejects(new Outbox(journal, { send: async () => ({}), network: async () => ({}), get: async () => { throw status(fail); } }).sweep(), /HTTP_REFUSED/);
+  for (fail of [401, 403, 429, 503]) await assert.rejects(new Outbox(journal, { send: async () => ({}), network: async () => ({}), get: async () => { throw new TaskReadError(status(fail)); } }).sweep(), /HTTP_REFUSED/);
 });
 
 test("take: the delivered answer body is dropped while its dedupe fence remains", async () => {
