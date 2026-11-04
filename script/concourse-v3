@@ -6,4 +6,4 @@ if ! "$NODE" -e 'if (Number(process.versions.node.split(".")[0]) < 24) process.e
   printf '%s\n' 'Concourse v3 requires Node >=24. Set CONCOURSE_V3_NODE to an explicit Node 24 executable.' >&2
   exit 1
 fi
-exec "$NODE" --experimental-transform-types "$ROOT/pi/concourse-v3/cli.ts" "$@"
+exec "$NODE" --disable-warning=ExperimentalWarning --experimental-transform-types "$ROOT/pi/concourse-v3/cli.ts" "$@"

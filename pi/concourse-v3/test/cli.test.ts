@@ -118,3 +118,12 @@ test("one-shot action parser preserves setup grammar and requires explicit bound
   assert.equal(parseArgs(["login", "--profile", profile, "--no-open", "--json"]).command, "login");
   assert.deepEqual(parseArgs(["start", "--profile", profile, "--", "--continue"]).piArgs, ["--continue"]);
 });
+test("wrapper output is exactly JSON lines with stderr merged, no runtime warnings", () => {
+  const wrapper = fileURLToPath(new URL("../../../script/concourse-v3", import.meta.url));
+  for (const args of [["doctor", "--json"], ["callback", "--url", "https://example.invalid/callback?x", "--json"], ["identity", "--json"]]) {
+    const r = spawnSync("/bin/sh", ["-c", '"$0" "$@" 2>&1', wrapper, ...args], { cwd: "/", env: { ...process.env, CONCOURSE_V3_NODE: process.execPath }, encoding: "utf8" });
+    assert.equal(r.status, 1); assert.doesNotMatch(r.stdout, /Warning/);
+    const lines = r.stdout.trimEnd().split("\n");
+    assert.equal(lines.length, 1); assert.equal(JSON.parse(lines[0]).phase, "blocked");
+  }
+});
