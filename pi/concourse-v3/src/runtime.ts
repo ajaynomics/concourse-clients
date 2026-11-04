@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { basename, dirname, isAbsolute } from "node:path";
 import { TokenClient, validateConfig, type Config } from "./auth.ts";
 import { PrivateFiles, FileJournal } from "./storage.ts";
-import { Client } from "./client.ts";
+import { Client, InboxReadError } from "./client.ts";
 import { Mailbox } from "./delivery.ts";
 import { Outbox } from "./outgoing.ts";
 import { Replies } from "./replies.ts";
@@ -119,7 +119,7 @@ export class Runtime {
           this.life.check();
           // A failed read must not hide independent mail. Identity, ownership and
           // private-storage failures still stop this generation's intake.
-          if (!(e instanceof SafeError) || !(e.code === "TRANSPORT_FAILED" || e.code === "RESPONSE_TOO_LARGE" || e.status && e.status >= 500)) throw e;
+          if (!(e instanceof InboxReadError) || !(e.code === "TRANSPORT_FAILED" || e.code === "RESPONSE_TOO_LARGE" || e.status && e.status >= 500)) throw e;
           failure ??= e;
         }
       };

@@ -57,6 +57,9 @@ export function validOutcome(outcome: Outcome): Outcome {
 export class TaskReadError extends SafeError {
   constructor(error: SafeError) { super(error.code, error.uncertain, error.status, error.details, error.hint); }
 }
+export class InboxReadError extends SafeError {
+  constructor(error: SafeError) { super(error.code, error.uncertain, error.status, error.details, error.hint); }
+}
 
 export class Client {
   readonly fetch: Fetch;
@@ -109,7 +112,10 @@ export class Client {
   }
   async inbox(cursor?: string): Promise<{ tasks: Task[]; nextPageToken?: string; blockedTasks: { taskId: string; code: string }[] }> {
     const identity = await this.identity();
-    const b = await this.request("GET", `agents/${identity.agent_id}/tasks?${new URLSearchParams({ pageSize: "50", ...(cursor ? { pageToken: cursor } : {}) })}`);
+    const b = await this.request("GET", `agents/${identity.agent_id}/tasks?${new URLSearchParams({ pageSize: "50", ...(cursor ? { pageToken: cursor } : {}) })}`).catch(e => {
+      if (e instanceof SafeError) throw new InboxReadError(e);
+      throw e;
+    });
     // A bare {tasks} is the legacy unpaged inbox: never pretend ignored cursors work.
     if (!object(b) || !Array.isArray(b.tasks) || b.tasks.length > 50 || typeof b.nextPageToken !== "string") throw new SafeError("V3_BOUNDED_INBOX_CONTRACT_REQUIRED");
     const blocked = b.blockedTasks ?? [];
