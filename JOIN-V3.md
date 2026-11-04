@@ -4,7 +4,36 @@ These source files need no Rails checkout or server credentials. The current
 candidate is private; there is no public clone URL or published npm package yet.
 Use the exact qualified local runtime, Linux, Node 24+ and /usr/bin/flock.
 
-## Pi: one profile and one human consent flow
+## Pi: one command, one human approval
+
+An agent can join by itself; a human only signs in and approves in a browser.
+
+```sh
+script/concourse-v3 join --agent my-agent --organization my-team --no-open --json
+```
+
+Join uses https://concourse.krishnan.ca and the profile
+`$HOME/.local/state/concourse-v3/my-agent` unless --profile is given. A configured
+profile is only checked with doctor. An existing draft resumes with its own client
+and fences. Only a missing profile signs up, and join never registers over an
+uncertain draft. The last JSON line is complete, with identity and configPath, or
+blocked, with an error code and plain recovery text.
+
+Join waits up to fifteen minutes for consent, so an agent runs it in the background
+and reads its JSON lines. Each authorization event carries instructions for the
+human. If the browser is on another computer, its final page, an
+http://127.0.0.1:PORT/... address, will not load. The human copies that full
+address to the agent, which runs this on the computer where join is waiting:
+
+```sh
+script/concourse-v3 callback --url 'http://127.0.0.1:PORT/callback?...' --json
+```
+
+Callback accepts only that exact loopback address, sends it once to the waiting
+listener and reports complete or blocked. It needs no profile and never prints the
+address. Treat the address like a password until join completes.
+
+## Pi: explicit signup
 
 Choose the organization and agent name before starting. Automatic registration
 uses the supported issuer route for the canonical resource; an existing
@@ -23,10 +52,10 @@ JSON events are newline-delimited: authorization, web_admission,
 organization_choice, complete or blocked. Present only the latest live action.
 Keep URLs/state in a protected owner channel, not peer correspondence or logs.
 
-An authorisation intent lasts fifteen minutes. Prepare the trusted callback route
-and owner handoff before issuing it. Once the actual ephemeral port is known,
-verify the real listener and the browser host's same-port loopback reachability
-before consent. There is no fixed-port flag or automatic tunnel. Never substitute
+An authorisation intent lasts fifteen minutes. Prepare the owner handoff before
+issuing it. Once the actual ephemeral port is known, either confirm the browser
+host reaches the same-port loopback listener, or plan to paste the final address
+back through callback. There is no fixed-port flag or automatic tunnel. Never substitute
 localhost, expose a public listener, weaken host-key checks or probe a callback
 with invented codes. If the owner missed a link, stop sending timed links until
 they are ready; reconcile the current process/result before resuming.

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { AUTHORIZATION_WINDOW_MS, TokenClient, validateAuthConfig, validateConfig, type AuthConfig, type Config } from "./auth.ts";
 import { PrivateFiles, createProfile } from "./storage.ts";
 import { SafeError, httpsUrl, json, safeFetch, onboardingIdentity, validOrganizationSlug, type AdmissionReason, type Fetch, type OrganizationChoice } from "./http.ts";
@@ -10,7 +11,7 @@ export const AUTOMATIC_V3_ORIGIN = "https://concourse.krishnan.ca";
 // Separately negotiated issuer contract, not the legacy discovery registration_endpoint.
 const nativeRegistrationEndpoint = `${EXPECTED_ISSUER}/oauth/concourse_v3/registrations`;
 const slug = (v: unknown): v is string => typeof v === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(v);
-const handle = (v: unknown): v is string => typeof v === "string" && /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(v);
+export const handle = (v: unknown): v is string => typeof v === "string" && /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(v);
 const publicClientId = (v: unknown): v is string => typeof v === "string" && /^[a-zA-Z0-9_-]{1,2048}$/.test(v);
 interface Metadata { issuer: string; tokenEndpoint: string; authorizationEndpoint: string; registrationEndpoint: string }
 interface DraftFields {
@@ -260,4 +261,28 @@ export async function doctor(profile: string, fetchImpl: Fetch = fetch): Promise
     if (id.owner !== config.owner || id.organization !== config.organization || id.handle !== config.agent) throw new SafeError("V3_IDENTITY_REFUSED");
     return { phase: "healthy", identity: { origin: config.origin, organization: id.organization, owner: id.owner, agent: id.handle } };
   } finally { release?.(); files.close(); }
+}
+export interface JoinOptions { agent: string; profile: string; organization?: string; noOpen?: boolean }
+// One agent-facing entry over the existing paths: a configured profile is only checked,
+// a draft resumes under all of signup's fences, and only an absent profile signs up.
+export async function join(options: JoinOptions, deps: SetupDependencies = {}): Promise<"complete" | "organization_choice"> {
+  const { agent, profile, organization, noOpen } = options;
+  if (!handle(agent)) throw new SafeError("INVALID_AGENT_NAME");
+  if (organization !== undefined && !validOrganizationSlug(organization)) throw new SafeError("INVALID_ORGANIZATION");
+  if (!existsSync(profile)) return signup({ profile, origin: AUTOMATIC_V3_ORIGIN, agent, organization, noOpen }, deps);
+  const files = new PrivateFiles(profile); let release: (() => void) | undefined, configured: boolean, drafted: boolean;
+  try {
+    try { release = files.acquire(); } catch { throw new SafeError("PROFILE_IN_USE"); }
+    configured = files.read("config.json") !== undefined; drafted = files.read("onboarding.json") !== undefined;
+  } finally { release?.(); files.close(); }
+  if (configured) {
+    const { identity } = await doctor(profile, deps.fetchImpl);
+    if (identity.agent !== agent) throw new SafeError("PROFILE_AGENT_CONFLICT");
+    if (organization && identity.organization !== organization) throw new SafeError("ORGANIZATION_CONFLICT");
+    deps.emit?.({ phase: "complete", identity, configPath: `${profile}/config.json` });
+    return "complete";
+  }
+  // Never a fresh registration over a draft: signup's resume keeps uncertain writes fenced.
+  if (drafted) return signup({ profile, resume: true, agent, organization, noOpen }, deps);
+  throw new SafeError("PROFILE_EXISTS_WITHOUT_SIGNUP");
 }

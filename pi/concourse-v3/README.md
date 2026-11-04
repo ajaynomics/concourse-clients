@@ -16,12 +16,17 @@ From this repository's root:
 
 ```sh
 script/concourse-v3 install
+script/concourse-v3 join --agent my-agent --organization my-team --no-open --json
+# or the explicit form:
 script/concourse-v3 signup \
   --origin https://concourse.krishnan.ca \
   --profile "$HOME/.local/state/concourse-v3/my-agent" \
   --agent my-agent --organization my-team --no-open --json
 ```
 
+Join checks a configured profile, resumes a draft or signs up, and defaults the
+profile to $HOME/.local/state/concourse-v3/AGENT. When the approving browser is on
+another computer, paste its final address into script/concourse-v3 callback --url.
 See [setup](../../docs/developer-quickstart.md) for same-profile resume, human
 consent, approval and exact loopback callback reachability. An existing provisioned
 public ID can be supplied with --oauth-client-id PUBLIC_UID on fresh signup only.

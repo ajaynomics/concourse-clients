@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { request } from "node:http";
 import { signup, doctor, EXPECTED_ISSUER, type Draft, type SetupEvent, type SetupDependencies } from "../src/onboarding.ts";
 import { PrivateFiles } from "../src/storage.ts";
@@ -351,6 +351,18 @@ for (const reason of ["awaiting_approval", "declined"]) test(`CLI ${reason} refu
 });
 
 const AUTHORIZATION_TEXT = "Open this link and approve. If your browser is on another computer and ends on a page that will not load, copy that page's full address and give it to the agent, which runs: script/concourse-v3 callback --url '<address>'";
+// The agent-first CLI: join drives signup and the browser hands back through callback.
+async function joinCli(f: ReturnType<typeof fixture>, extra: string[] = [], deps: Partial<SetupDependencies> = {}) {
+  const { main } = await import("../cli.ts");
+  const output: string[] = [], callbacks: Promise<void>[] = [];
+  const code = await main(["join", "--agent", "synthetic", "--organization", "example-team", "--profile", f.profile, "--no-open", "--json", ...extra], async () => { assert.fail("No process spawn"); }, line => {
+    output.push(line); const event = JSON.parse(line);
+    if (event.phase === "authorization" || event.phase === "web_admission") callbacks.push(f.open(event.actionUrl));
+  }, { ...f.deps, open: async () => { assert.fail("no-open must not open a browser"); }, ...deps });
+  await Promise.all(callbacks);
+  return { code, lines: output.map(line => JSON.parse(line)) };
+}
+
 test("authorization events tell the human how to hand back a remote browser's address", async () => {
   const f = fixture();
   try {
@@ -381,5 +393,69 @@ test("remote browser: the agent pastes the failed loopback address and signup co
     assert.ok(!pasted.join("\n").includes("synthetic-code"));
     assert.equal(f.calls.filter(path => path.endsWith("/oauth/token")).length, 1);
     assert.equal(f.calls.filter(path => path === endpoint).length, 1);
+  } finally { f.cleanup(); }
+});
+
+test("join signs up once, then only checks the configured profile with doctor", async () => {
+  const f = fixture();
+  try {
+    const first = await joinCli(f);
+    assert.equal(first.code, 0);
+    assert.deepEqual(first.lines.map(l => l.phase), ["authorization", "web_admission", "complete"]);
+    assert.equal(first.lines[0].instructions, AUTHORIZATION_TEXT);
+    const done = first.lines.at(-1)!;
+    assert.deepEqual(done.identity, { origin, organization: "example-team", owner: "synthetic-owner", agent: "synthetic" });
+    assert.equal(done.configPath, `${f.profile}/config.json`);
+    const count = f.calls.length;
+    const again = await joinCli(f);
+    assert.equal(again.code, 0); assert.deepEqual(again.lines, [done]);
+    assert.deepEqual(f.calls.slice(count).map(u => new URL(u).pathname), ["/api/identity"], "doctor only: no registration, consent or card write");
+    const { main } = await import("../cli.ts"); const output: string[] = [];
+    assert.equal(await main(["join", "--agent", "someone-else", "--profile", f.profile, "--json"], async () => { assert.fail("No process spawn"); }, line => output.push(line), f.deps), 1);
+    assert.equal(JSON.parse(output[0]).error, "PROFILE_AGENT_CONFLICT");
+    assert.equal(f.calls.filter(path => path === endpoint).length, 1);
+  } finally { f.cleanup(); }
+});
+
+test("join resumes an existing draft with the same client instead of registering again", async () => {
+  const f = fixture(); f.state.badDiscovery = true;
+  try {
+    await assert.rejects(signup(f.options, f.deps), /RESOURCE_METADATA_REFUSED/);
+    const before = f.read<Draft>("onboarding.json")!; f.state.badDiscovery = false;
+    const result = await joinCli(f);
+    assert.equal(result.code, 0); assert.equal(result.lines.at(-1)!.phase, "complete");
+    assert.equal(f.read<Draft>("onboarding.json")!.redirectUri, before.redirectUri);
+    assert.equal(f.calls.filter(path => path === endpoint).length, 1);
+  } finally { f.cleanup(); }
+});
+
+test("join keeps an uncertain registration fenced and never registers again", async () => {
+  const f = fixture(); f.state.lost = true;
+  try {
+    await assert.rejects(signup(f.options, f.deps), /REGISTRATION_UNCERTAIN_DO_NOT_REREGISTER/);
+    f.state.lost = false; const count = f.calls.length;
+    const result = await joinCli(f);
+    assert.equal(result.code, 1);
+    assert.deepEqual([result.lines[0].phase, result.lines[0].error, result.lines[0].uncertain], ["blocked", "REGISTRATION_UNCERTAIN_DO_NOT_REREGISTER", true]);
+    assert.equal(f.calls.length, count); assert.equal(f.read<Draft>("onboarding.json")!.registration, "uncertain");
+  } finally { f.cleanup(); }
+});
+
+test("join refuses a busy profile or an empty directory, and defaults the profile per agent", async () => {
+  const { parseArgs } = await import("../cli.ts");
+  assert.equal(parseArgs(["join", "--agent", "my-agent"], "/home/someone").options.profile, "/home/someone/.local/state/concourse-v3/my-agent");
+  assert.equal(parseArgs(["join", "--agent", "my-agent", "--profile", "/x/concourse-v3/p"], "").options.profile, "/x/concourse-v3/p");
+  for (const home of ["", "relative/home"]) assert.throws(() => parseArgs(["join", "--agent", "my-agent"], home), /HOME_UNSET_USE_PROFILE/);
+  assert.throws(() => parseArgs(["join", "--agent", "../escape"], "/home/someone"), /JOIN_AGENT_NAME_REQUIRED/);
+  assert.throws(() => parseArgs(["join"], "/home/someone"), /JOIN_AGENT_NAME_REQUIRED/);
+  assert.throws(() => parseArgs(["join", "--agent", "a", "--profile", "relative"], "/home/someone"), /EXPLICIT_ABSOLUTE_PROFILE_REQUIRED/);
+  assert.throws(() => parseArgs(["join", "--agent", "a", "--origin", "https://other.invalid"], "/home/someone"), /INVALID_CLI_OPTION/);
+  const f = fixture();
+  try {
+    mkdirSync(f.profile, { recursive: true, mode: 0o700 }); chmodSync(dirname(f.profile), 0o700);
+    assert.equal((await joinCli(f)).lines[0].error, "PROFILE_EXISTS_WITHOUT_SIGNUP");
+    const files = new PrivateFiles(f.profile), release = files.acquire();
+    try { assert.equal((await joinCli(f)).lines[0].error, "PROFILE_IN_USE"); } finally { release(); files.close(); }
+    assert.deepEqual(f.calls, []);
   } finally { f.cleanup(); }
 });

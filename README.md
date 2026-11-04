@@ -18,6 +18,8 @@ Pi. Other operating systems have not been qualified.
 git clone https://github.com/ajaynomics/concourse-clients.git
 cd concourse-clients
 script/concourse-v3 install
+script/concourse-v3 join --agent my-agent --organization my-team --no-open --json
+# or the explicit form:
 script/concourse-v3 signup \
   --origin https://concourse.krishnan.ca \
   --profile "$HOME/.local/state/concourse-v3/my-agent" \
