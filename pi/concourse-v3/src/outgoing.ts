@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { qualifiedRecipient, TASK_FINISHED_HINT, wireParts, type Client } from "./client.ts";
+import { qualifiedRecipient, TASK_FINISHED_HINT, TaskReadError, wireParts, type Client } from "./client.ts";
 import type { Journal } from "./storage.ts";
 import { object, terminal, type Json, type ObjectValue, type Outgoing, type Task, type Ledger } from "./types.ts";
 import { SafeError } from "./http.ts";
@@ -68,6 +68,7 @@ export class Outbox {
   // Nothing was accepted, so a read of the target Task is safe; it only sharpens the advice.
   private async refusal(e: SafeError, messageId: string, taskId?: string): Promise<SafeError> {
     const details = { messageId, ...(e.status ? { status: e.status } : {}), ...e.details };
+    if (e.details.rpcCode === -32004 && e.details.reason === "REPLY_REQUIRED") return new SafeError("REPLY_REQUIRED", false, e.status, details, "Nothing was delivered. You received this task. Use reply with its full task_id and an explicit state, not send.");
     // §3.1.1: UnsupportedOperationError is how a terminal Task refuses another message.
     // Servers without the TASK_TERMINAL reason also use -32004 otherwise, so check what we know.
     if (e.details.reason === "TASK_TERMINAL" || taskId && e.details.rpcCode === -32004 && await this.finished(taskId)) return new SafeError("TASK_ALREADY_FINISHED", false, e.status, details, TASK_FINISHED_HINT);
@@ -125,13 +126,14 @@ export class Outbox {
     const page = start < 0 ? [] : tasks.slice(start, start + max);
     for (const taskId of page) {
       const before = this.observation(this.journal.load(), taskId);
-      let value: Task | undefined, blocked: string | undefined;
+      let value: Task | undefined, blocked: string | undefined, failure: TaskReadError | undefined;
       try { value = await this.client.get(taskId); } catch (e) {
         this.guard();
-        if (e instanceof SafeError && e.code === "RESPONSE_TOO_LARGE" && !e.uncertain) blocked = "RESPONSE_TOO_LARGE";
+        if (e instanceof TaskReadError && e.code === "TRANSPORT_FAILED" && !e.uncertain) { blocked = e.code; failure = e; }
+        else if (e instanceof SafeError && e.code === "RESPONSE_TOO_LARGE" && !e.uncertain) blocked = "RESPONSE_TOO_LARGE";
         else if (taskLocalRefusal(e)) { if (e.status !== 404) blocked = `HTTP_${e.status}`; }
         else throw e;
-        // Neither missing, refused nor oversized content is completion. Retain intent and retry in a later bounded sweep.
+        // A failed read is not completion. Keep the intent and retry on a later lap.
       }
       this.guard();
       const fresh = this.journal.load(), saved = fresh.outgoing[byTask.get(taskId)!.messageId];
@@ -148,6 +150,9 @@ export class Outbox {
         }
       }
       fresh.cursors.answers = taskId; this.journal.save(fresh);
+      // Surface the transport failure, but resume after this Task next time.
+      // Stop after one timeout rather than spending the whole sweep's budget.
+      if (failure) throw failure;
     }
     if (start < 0 || start + page.length >= tasks.length) { this.guard(); const fresh = this.journal.load(); delete fresh.cursors.answers; this.journal.save(fresh); }
   }
@@ -173,7 +178,7 @@ function pending(l: Ledger, o: Outgoing): boolean {
 // One Task's refusal must not starve later answers. Authentication, membership, rate and
 // service-wide failures still stop the sweep so they surface instead of being skipped.
 function taskLocalRefusal(e: unknown): e is SafeError {
-  return e instanceof SafeError && e.code.startsWith("HTTP_REFUSED") && !e.uncertain && !!e.status && ![401, 403, 429, 503].includes(e.status);
+  return e instanceof TaskReadError && e.code.startsWith("HTTP_REFUSED") && !e.uncertain && !!e.status && ![401, 403, 429, 503].includes(e.status);
 }
 export function answerKey(value: Json): string {
   const v = value as unknown as Task;

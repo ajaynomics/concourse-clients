@@ -33,3 +33,23 @@ test("joined refresh waits for its newer read even after earlier I/O fails, with
     } finally { await f.cleanup(); }
   }
 });
+
+test("persistent tail-page failure cannot starve fresh head mail or requested replies", { timeout: 10000 }, async t => {
+  const f = await nativeFixture(() => ({ text: "Independent mail still arrives" }), { inboxEmpty: true });
+  t.after(() => f.cleanup());
+  const l = f.journal.load(); l.cursors.inbox = "sdk-page-2";
+  l.outgoing.original = { messageId: "original", recipient: "other/sender", taskId: "00000000-0000-4000-8000-000000000001", phase: "accepted", expectReply: true }; f.journal.save(l);
+  f.server.inboxTailFailure = 500; f.server.current = answer("tail-independent-result");
+  for (const id of ["fresh-head-one", "fresh-head-two"]) {
+    f.server.inbox = [{ ...task("TASK_STATE_SUBMITTED", [id]), id }];
+    await f.session.prompt("/concourse-v3 refresh"); await bounded(f.session.waitForIdle());
+    assert.ok(Object.values(f.journal.load().batches).some(b => b.messageIds.includes(id) && b.phase === "handed-off"));
+    assert.equal(f.journal.load().cursors.inbox, "sdk-page-2", "failed catch-up page keeps its cursor for retry");
+  }
+  assert.match(JSON.stringify(f.contexts), /Actual requested result/);
+  assert.equal(f.aborted, 0); assert.equal(f.server.calls.filter(c => c.method === "PATCH").length, 0);
+  f.server.inboxTailFailure = undefined;
+  await f.session.prompt("/concourse-v3 refresh"); await bounded(f.session.waitForIdle());
+  assert.equal(f.journal.load().cursors.inbox, undefined);
+  assert.equal(Object.values(f.journal.load().batches).filter(b => b.taskId.startsWith("fresh-head")).length, 2, "successful head is never replayed");
+});

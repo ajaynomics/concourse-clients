@@ -57,6 +57,7 @@ export class WireFixture {
   rpcFailure?: "lost" | "500" | "401" | "bad-id";
   pageTokens: string[] = [];
   inboxFailureOnce?: number;
+  inboxTailFailure?: number;
   signal(operation: string) { let d = this.reached.get(operation); if (!d) { d = deferred<void>(); this.reached.set(operation, d); } return d; }
   hold(operation: string) { const d = deferred<void>(); this.operationGates.set(operation, d); return d; }
   ping() { this.stream?.enqueue(new TextEncoder().encode("event: ping\ndata: {}\n\n")); }
@@ -87,6 +88,7 @@ export class WireFixture {
       const snapshot = structuredClone(token ? [] : this.inbox), failure = this.inboxFailureOnce; this.inboxFailureOnce = undefined;
       this.signal("inbox").resolve(); await this.operationGates.get("inbox")?.promise;
       if (failure) return response({}, failure);
+      if (token && this.inboxTailFailure) return response({}, this.inboxTailFailure);
       return response({ tasks: snapshot, nextPageToken: token ? "" : "sdk-page-2", pageSize: 50 });
     }
     if (method === "GET" && url.pathname === `/api/tasks/${this.current.id}`) return response(this.current);

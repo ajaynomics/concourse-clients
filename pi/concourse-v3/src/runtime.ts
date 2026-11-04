@@ -111,25 +111,38 @@ export class Runtime {
       return this.following;
     }
     const job = this.life.run(async () => {
-      // Always inspect new mail at the head, and advance a separate bounded tail for catch-up.
-      const cursor = this.journal.load().cursors.inbox, head = await this.client.inbox(); this.life.check();
-      const page = cursor ? await this.client.inbox(cursor) : head; this.life.check();
-      for (const t of (page === head ? head.tasks : [...head.tasks, ...page.tasks])) {
-        this.life.check();
-        try { this.mailbox.enqueue(t); }
+      const cursor = this.journal.load().cursors.inbox;
+      let failure: unknown;
+      const readInbox = async (after?: string) => {
+        try { return await this.client.inbox(after); }
         catch (e) {
           this.life.check();
-          if (!(e instanceof SafeError) || !["DELIVERY_MESSAGE_LIMIT", "DUPLICATE_CALLER_IDS"].includes(e.code)) throw e;
-          const diagnostic = this.journal.load(); diagnostic.blockedInbox ??= {}; diagnostic.blockedInbox[t.id] = { code: e.code }; this.journal.save(diagnostic);
+          // A failed read must not hide independent mail. Identity, ownership and
+          // private-storage failures still stop this generation's intake.
+          if (!(e instanceof SafeError) || !(e.code === "TRANSPORT_FAILED" || e.code === "RESPONSE_TOO_LARGE" || e.status && e.status >= 500)) throw e;
+          failure ??= e;
         }
-      }
-      const l = this.journal.load();
-      for (const blocked of [...head.blockedTasks, ...page.blockedTasks]) { l.blockedInbox ??= {}; l.blockedInbox[blocked.taskId] = { code: blocked.code }; }
-      if (page.nextPageToken) l.cursors.inbox = page.nextPageToken; else delete l.cursors.inbox;
-      this.journal.save(l); this.mailbox.flush();
-      // Answers already stored are offered even when this sweep fails.
-      let failure: unknown;
-      try { await this.outbox.sweep(); } catch (e) { failure = e; }
+      };
+      const consume = (page: Awaited<ReturnType<Client["inbox"]>>, advance: boolean) => {
+        this.life.check();
+        for (const t of page.tasks) {
+          try { this.mailbox.enqueue(t); }
+          catch (e) {
+            this.life.check();
+            if (!(e instanceof SafeError) || !["DELIVERY_MESSAGE_LIMIT", "DUPLICATE_CALLER_IDS"].includes(e.code)) throw e;
+            const diagnostic = this.journal.load(); diagnostic.blockedInbox ??= {}; diagnostic.blockedInbox[t.id] = { code: e.code }; this.journal.save(diagnostic);
+          }
+        }
+        const l = this.journal.load();
+        for (const blocked of page.blockedTasks) { l.blockedInbox ??= {}; l.blockedInbox[blocked.taskId] = { code: blocked.code }; }
+        if (advance) { if (page.nextPageToken) l.cursors.inbox = page.nextPageToken; else delete l.cursors.inbox; }
+        this.journal.save(l); this.mailbox.flush();
+      };
+      // Deliver the head before catch-up I/O. A failed tail keeps its cursor,
+      // but cannot discard fresh mail or prevent requested-answer polling.
+      const head = await readInbox(); if (head) consume(head, !cursor);
+      if (cursor) { const tail = await readInbox(cursor); if (tail) consume(tail, true); }
+      try { await this.outbox.sweep(); } catch (e) { failure ??= e; }
       this.life.check();
       for (const o of this.outbox.offers()) this.offerAnswer(o.messageId);
       if (failure) throw failure;

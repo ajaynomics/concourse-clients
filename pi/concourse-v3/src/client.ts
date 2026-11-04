@@ -53,6 +53,11 @@ export function validOutcome(outcome: Outcome): Outcome {
   return outcome;
 }
 
+// Distinguish a failed Task GET from the identity read required before it.
+export class TaskReadError extends SafeError {
+  constructor(error: SafeError) { super(error.code, error.uncertain, error.status, error.details, error.hint); }
+}
+
 export class Client {
   readonly fetch: Fetch;
   constructor(readonly config: Config, private getToken: () => Promise<string>, fetchImpl: Fetch = fetch, private alive: () => boolean = () => true) { this.fetch = safeFetch(config.origin, fetchImpl); }
@@ -86,9 +91,14 @@ export class Client {
       if (e instanceof SafeError && (e.status === 404 || e.code === "RESPONSE_TOO_LARGE")) throw new SafeError("V3_IDENTITY_REFUSED");
       throw e;
     }
-    const value = task(await this.request("GET", `api/tasks/${encodeURIComponent(id)}`));
-    if (value.id !== id) throw new SafeError("WRONG_READ_TASK");
-    return value;
+    try {
+      const value = task(await this.request("GET", `api/tasks/${encodeURIComponent(id)}`));
+      if (value.id !== id) throw new SafeError("WRONG_READ_TASK");
+      return value;
+    } catch (e) {
+      if (e instanceof SafeError) throw new TaskReadError(e);
+      throw e;
+    }
   }
   async list(filters: Record<string, string | number | boolean> = {}): Promise<{ tasks: Task[]; nextPageToken?: string; [key: string]: unknown }> {
     await this.identity();

@@ -62,6 +62,17 @@ test("a send that continues a finished task says so, from the reason or from wha
   assert.ok(Object.values(f.ledger().outgoing).every(o => o.phase === "refused"));
 });
 
+test("a received-task send refusal says use reply without a fallback read or retry", async t => {
+  const f = fixture(); t.after(f.cleanup);
+  const r = await f.cli(["send", "--recipient", "other/sender", "--input", f.input({ parts: [{ text: "answer" }], taskId: TASK })], rpcError({ code: -32004, message: "private server text is not echoed", data: [...errorInfo("UNSUPPORTED_OPERATION"), ...errorInfo("REPLY_REQUIRED", "concourse.krishnan.ca")] }));
+  assert.equal(r.posts, 1); assert.equal(r.code, 1);
+  assert.deepEqual([r.out.error, r.out.uncertain, r.out.reason, r.out.taskId], ["REPLY_REQUIRED", false, "REPLY_REQUIRED", TASK]);
+  assert.match(r.out.recovery, /Nothing was delivered.*Use reply.*explicit state/);
+  assert.equal(f.ledger().outgoing[r.out.messageId].phase, "refused");
+  assert.ok(!f.server.calls.some(c => c.url.includes("/api/tasks/")));
+  assert.ok(!JSON.stringify(r.out).includes("private server text"));
+});
+
 test("anything short of a complete error response for our request stays uncertain", async t => {
   const f = fixture(); t.after(f.cleanup);
   const bodies: ((body: { id: unknown }) => Response)[] = [

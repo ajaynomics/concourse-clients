@@ -131,7 +131,7 @@ export async function executeCommand(argv: string[], fetchImpl: Fetch = fetch): 
     } catch (e) {
       if (!["send", "reply", "cancel"].includes(p.command)) throw e;
       // These codes are only raised for definite refusals: the server answered and accepted nothing.
-      const refused = e instanceof SafeError && !e.uncertain && (!!e.status && e.status < 500 || ["SEND_REFUSED", "REPLY_REFUSED", "CANCEL_REFUSED", "TASK_ALREADY_FINISHED"].includes(e.code));
+      const refused = e instanceof SafeError && !e.uncertain && (!!e.status && e.status < 500 || ["SEND_REFUSED", "REPLY_REFUSED", "CANCEL_REFUSED", "TASK_ALREADY_FINISHED", "REPLY_REQUIRED"].includes(e.code));
       throw e instanceof SafeError ? new CommandError(e.code, attempted && !refused, ids, e.details, e.hint) : new CommandError("LOCAL_WRITE_BOOKKEEPING_FAILED", attempted, ids);
     }
   } finally { release?.(); files.close(); }
