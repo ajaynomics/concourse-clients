@@ -112,9 +112,11 @@ test("HTTP refusals name their status; shortened task IDs are refused before any
 
 test("rpcRefusal keeps only the numeric code and a well-formed ErrorInfo reason", () => {
   const body = (error: object) => ({ id: 7, body: { jsonrpc: "2.0", id: 7, error } });
-  assert.deepEqual(rpcRefusal(body({ code: -32001, message: "m", data: errorInfo("TASK_NOT_FOUND") }), "X")!.details, { rpcCode: -32001, reason: "TASK_NOT_FOUND" });
-  assert.deepEqual(rpcRefusal(body({ code: -32001, message: "m", data: errorInfo("not a reason\u001b") }), "X")!.details, { rpcCode: -32001 });
-  assert.deepEqual(rpcRefusal(body({ code: -32001, message: "m", data: [{ reason: "NO_TYPE" }] }), "X")!.details, { rpcCode: -32001 });
+  assert.deepEqual(rpcRefusal(body({ code: -32002, message: "m", data: errorInfo("TASK_NOT_CANCELABLE") }), "X")!.details, { rpcCode: -32002, reason: "TASK_NOT_CANCELABLE" });
+  assert.deepEqual(rpcRefusal(body({ code: -32002, message: "m", data: errorInfo("not a reason\u001b") }), "X")!.details, { rpcCode: -32002 });
+  assert.deepEqual(rpcRefusal(body({ code: -32002, message: "m", data: [{ reason: "NO_TYPE" }] }), "X")!.details, { rpcCode: -32002 });
+  // Task not found can follow a save when membership changes mid-request.
+  assert.equal(rpcRefusal(body({ code: -32001, message: "m", data: errorInfo("TASK_NOT_FOUND") }), "X"), undefined);
   assert.equal(rpcRefusal(undefined, "X"), undefined);
   assert.equal(rpcRefusal({ id: undefined, body: { jsonrpc: "2.0", error: { code: 1, message: "m" } } }, "X"), undefined);
 });
@@ -128,7 +130,7 @@ test("only pre-commit codes are refusals; errors after a saved write stay uncert
   assert.equal(rpcRefusal(body(waitLimit), "X"), undefined);
   assert.equal(rpcRefusal(body({ code: -32603, message: "Internal error" }), "X"), undefined);
   assert.equal(rpcRefusal(body({ code: -32050, message: "custom" }), "X"), undefined);
-  assert.equal(rpcRefusal(body({ code: -32001, message: "m", data: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "X", domain: "d", metadata: { deliveryId: "d1" } }] }), "X"), undefined);
+  assert.equal(rpcRefusal(body({ code: -32004, message: "m", data: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "X", domain: "d", metadata: { deliveryId: "d1" } }] }), "X"), undefined);
 });
 
 test("an absent receipt proves non-delivery only after the original request could have landed", async () => {
