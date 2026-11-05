@@ -41,10 +41,50 @@ test("input-required then completed is two meaningful outcomes, not duplicated s
   f.set(answer("done")); await f.outbox.sweep(); assert.equal(f.outbox.offers().length, 1); assert.notEqual(f.outbox.offers()[0].answerKey, first.answerKey);
   f.outbox.take(f.outbox.offers()[0].messageId); await f.outbox.sweep(); assert.equal(f.outbox.offers().length, 0);
 });
-test("state-only/progress/receipt cannot resurrect history or create useful replies", async () => {
+test("state-only updates and stale retained output cannot create useful replies", async () => {
   const f = fixture(); await f.outbox.send("owner/peer", [{ text: "request" }]);
   for (const value of [task("TASK_STATE_COMPLETED"), task("TASK_STATE_WORKING"), { ...answer(), status: { state: "TASK_STATE_COMPLETED" }, artifacts: [], history: answer().history }]) { f.set({ ...value, artifacts: [] }); await f.outbox.sweep(); assert.equal(f.outbox.offers().length, 0); }
-  assert.equal(useful({ ...answer(), status: { ...answer().status, state: "TASK_STATE_WORKING" } }), false);
+  for (const state of ["TASK_STATE_WORKING", "TASK_STATE_SUBMITTED", "TASK_STATE_UNKNOWN"]) {
+    const value = answer("stale", state); value.status.timestamp = "2026-10-12T21:00:00.000Z";
+    assert.equal(useful(value), false);
+  }
+});
+test("requested WORKING content is delivered once across polls, continuations and restart, then completion still arrives", async () => {
+  const f = fixture(); const first = await f.outbox.send("owner/peer", [{ text: "request" }]);
+  await f.outbox.send("owner/peer", [{ text: "clarification" }], true, "00000000-0000-4000-8000-000000000001");
+  f.set(answer("confirmation", "TASK_STATE_WORKING")); await f.outbox.sweep();
+  assert.equal(f.outbox.offers().length, 1); assert.ok(f.outbox.take(first.messageId));
+  assert.ok(Object.values(f.journal.value.outgoing).every(o => !o.observedTerminal));
+  const restarted = new Outbox(f.journal, f.client);
+  await restarted.sweep(); assert.equal(restarted.offers().length, 0);
+  f.set(answer("later-confirmation", "TASK_STATE_WORKING")); await restarted.sweep();
+  assert.equal(restarted.offers().length, 1); assert.ok(restarted.take(first.messageId));
+  f.set(answer("done")); await restarted.sweep();
+  assert.equal(restarted.offers().length, 1); assert.ok(restarted.take(first.messageId));
+  assert.ok(Object.values(f.journal.value.outgoing).every(o => o.observedTerminal));
+});
+test("current WORKING messages and artifacts qualify independently, never stale or caller content", () => {
+  const message = answer("confirmation", "TASK_STATE_WORKING"); message.artifacts = [];
+  assert.equal(useful(message), true);
+  const artifact = answer("artifact", "TASK_STATE_WORKING"); delete artifact.status.message;
+  assert.equal(useful(artifact), true);
+  const caller = structuredClone(message); caller.status.message!.role = "ROLE_USER";
+  assert.equal(useful(caller), false);
+  const empty = structuredClone(message); empty.status.message!.parts = [{ text: "  " }];
+  assert.equal(useful(empty), false);
+  const stale = structuredClone(artifact); stale.status.timestamp = "2026-10-12T21:00:00.000Z";
+  assert.equal(useful(stale), false);
+  const unbound = structuredClone(message); delete unbound.metadata;
+  assert.equal(useful(unbound), false);
+});
+test("expect_reply=false suppresses WORKING content but still delivers a genuine question", async () => {
+  const f = fixture(); await f.outbox.send("owner/peer", [{ text: "FYI" }], false);
+  f.set(answer("unrequested", "TASK_STATE_WORKING")); await f.outbox.sweep();
+  assert.equal(f.outbox.offers().length, 0);
+  const artifact = answer("unrequested-artifact", "TASK_STATE_WORKING"); delete artifact.status.message;
+  f.set(artifact); await f.outbox.sweep(); assert.equal(f.outbox.offers().length, 0);
+  f.set(answer("question", "TASK_STATE_INPUT_REQUIRED")); await f.outbox.sweep();
+  assert.equal(f.outbox.offers().length, 1);
 });
 test("fair bounded sweep and persisted cursor survive churn and restart", async () => {
   const f = fixture();

@@ -191,7 +191,8 @@ export function useful(value: unknown): boolean {
   const content = (m: unknown): boolean => object(m) && Array.isArray(m.parts) && m.parts.some(p => object(p) && ((typeof p.text === "string" && !!p.text.trim()) || object(p.data) || object(p.file) || (typeof p.url === "string" && !!p.url) || (typeof p.raw === "string" && !!p.raw)));
   if (value.role === "ROLE_AGENT") return content(value);
   const t = value as unknown as Task;
-  if (!t.status || (!terminal(t.status.state) && t.status.state !== "TASK_STATE_INPUT_REQUIRED")) return false;
+  // A2A v1.0 §3.1.1: a Task may return useful output before it is terminal.
+  if (!t.status || (!terminal(t.status.state) && !["TASK_STATE_INPUT_REQUIRED", "TASK_STATE_WORKING"].includes(t.status.state))) return false;
   const output = taskOutput(t);
   return content(output.message) || output.artifacts.some(content);
 }

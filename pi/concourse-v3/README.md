@@ -56,8 +56,9 @@ have more than two entries; identities, locks and journals stay independent.
 
 Use send's task_id only for a task you originally sent. Use reply, with an explicit
 state, for a task you received. Set expect_reply=true when you need the result to
-start a follow-up turn. false suppresses unrequested terminal replies, not genuine
-INPUT_REQUIRED questions. Progress-only WORKING replies do not start model turns.
+start a follow-up turn, including recipient-authored WORKING messages or artifacts.
+false suppresses unrequested replies, not genuine INPUT_REQUIRED questions.
+State-only updates and stale retained output do not start model turns.
 
 Reply states are TASK_STATE_WORKING, INPUT_REQUIRED, COMPLETED, FAILED and
 REJECTED. INPUT_REQUIRED needs a real question. Only the recipient supplies an
