@@ -29,13 +29,16 @@ test("unavailable middle Task cannot starve later answers or lose intent across 
   restarted.take("c"); await restarted.sweep(3); assert.equal(restarted.offers().length, 0);
 });
 
-test("state-only completion with retained progress stays quiet even when intermediate poll was missed", async () => {
+test("state-only completion cannot resurrect retained WORKING output whether its intermediate poll was missed or consumed", async () => {
   for (const pollProgress of [false, true]) {
     const journal = new Memory(); let value = task();
     const client = { send: async () => value as unknown as Json, get: async () => value, network: async () => ({}) };
-    const outbox = new Outbox(journal, client); await outbox.send("owner/peer", [{ text: "request" }]);
+    const outbox = new Outbox(journal, client); const sent = await outbox.send("owner/peer", [{ text: "request" }]);
     const progress = output(answer("progress", "TASK_STATE_WORKING"), ["progress"], ["art1"]);
-    if (pollProgress) { value = progress; await outbox.sweep(); }
+    if (pollProgress) {
+      value = progress; await outbox.sweep(); assert.equal(outbox.offers().length, 1);
+      assert.ok(outbox.take(sent.messageId));
+    }
     value = output({ ...progress, status: { ...progress.status, state: "TASK_STATE_COMPLETED" } }, [], []);
     await outbox.sweep(); assert.equal(outbox.offers().length, 0);
   }
@@ -43,6 +46,17 @@ test("state-only completion with retained progress stays quiet even when interme
   const client = { send: async () => value as unknown as Json, get: async () => value, network: async () => ({}) };
   const outbox = new Outbox(journal, client); await outbox.send("owner/peer", [{ text: "request" }]);
   value = output(answer("fresh"), ["fresh"], []); await outbox.sweep(); assert.equal(outbox.offers().length, 1);
+});
+test("a state-only completion does not erase an unconsumed requested WORKING answer", async () => {
+  const journal = new Memory(); let value = task();
+  const client = { send: async () => value as unknown as Json, get: async () => value, network: async () => ({}) };
+  const outbox = new Outbox(journal, client); const sent = await outbox.send("owner/peer", [{ text: "request" }]);
+  const progress = output(answer("confirmation", "TASK_STATE_WORKING"), ["confirmation"], []);
+  value = progress; await outbox.sweep(); const key = outbox.offers()[0].answerKey;
+  value = output({ ...progress, status: { ...progress.status, state: "TASK_STATE_COMPLETED" } }, [], []);
+  await outbox.sweep(); assert.equal(outbox.offers().length, 1); assert.equal(outbox.offers()[0].answerKey, key);
+  assert.ok(outbox.take(sent.messageId));
+  const restarted = new Outbox(journal, client); await restarted.sweep(); assert.equal(restarted.offers().length, 0);
 });
 
 test("direct-Message receipt establishes acceptance without body, fake Task, resend or answer", async () => {
