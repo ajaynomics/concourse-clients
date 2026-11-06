@@ -291,7 +291,8 @@ test("uncertain code exchange cannot regenerate authorization or re-register on 
   const f = fixture(); f.state.exchangeLost = true;
   try {
     await assert.rejects(signup(f.options, { ...f.deps, open: async url => { const u = new URL(url), target = new URL(u.searchParams.get("redirect_uri")!); target.search = new URLSearchParams({ code, state: u.searchParams.get("state")!, iss: EXPECTED_ISSUER }).toString(); assert.equal(await callback(target.href), 400); } }), /TRANSPORT_FAILED/);
-    assert.equal(f.read("oauth-exchange.json"), true);
+    assert.equal(f.read("oauth-exchange.json"), undefined);
+    assert.equal(f.read<{ phase: string }>("oauth-code-exchange.json")!.phase, "dispatch-uncertain");
     await assert.rejects(signup({ profile: f.root, resume: true }, f.deps), /OAUTH_EXCHANGE_UNCERTAIN/);
     assert.equal(f.calls.filter(c => c.path === "/oauth/register").length, 0); assert.equal(f.calls.filter(c => c.path === "/oauth/token").length, 1);
     assert.equal(JSON.stringify(f.events).includes(access), false);

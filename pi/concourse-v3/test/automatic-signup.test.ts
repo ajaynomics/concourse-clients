@@ -56,7 +56,9 @@ function fixture() {
       assert.equal(body.get("client_id"), clientId); assert.equal(body.get("resource"), origin); assert.equal(body.get("scope"), "concourse");
       assert.equal(body.get("redirect_uri"), read<Draft>("onboarding.json")!.redirectUri);
       assert.equal(body.get("code_verifier")?.length, 43); assert.equal(body.has("client_secret"), false);
-      assert.equal(read("oauth-exchange.json"), true); assert.equal(read("oauth-pending.json"), null);
+      assert.equal(read("oauth-exchange.json"), undefined);
+      assert.equal(read<{ phase: string }>("oauth-code-exchange.json")!.phase, "dispatch-uncertain");
+      assert.equal(read("oauth-pending.json"), null);
       if (state.tokenLost) throw new Error("synthetic code exchange lost");
       return Response.json({ access_token: access, refresh_token: refresh, token_type: "Bearer", expires_in: 3600, scope: "concourse" });
     }

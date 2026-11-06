@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { TokenClient, type Config } from "../src/auth.ts";
 import { SafeError, type Fetch } from "../src/http.ts";
-import { config, deferred, profile, response } from "./helpers.ts";
+import { config, deferred, identity, profile, response } from "./helpers.ts";
+import { newExchange, refreshBinding } from "../src/refresh.ts";
+import { PrivateFiles } from "../src/storage.ts";
 
 const oauth: Config = { ...config, authorizationEndpoint: "https://issuer.invalid/authorize", auth: { kind: "oauth", redirectUri: "http://127.0.0.1:4555/callback" } };
 const old = { access: "old.access", refresh: "old.rotating", expires: 1, resource: config.origin, clientId: config.oauthClientId, issuer: config.issuer };
@@ -13,8 +15,11 @@ const callback = (url: string) => ({ code: "new.code", state: new URL(url).searc
 test("explicit fresh PKCE sign-in supersedes an old intent, not its durable refresh fence", async () => {
   const p = profile(); let posts = 0;
   try {
+    p.files.acquire();
     p.files.write("tokens.json", old);
     const client = new TokenClient(oauth, p.files, async (_url, init) => {
+      if (String(_url) === `${config.origin}/api/identity`) return response(identity);
+      assert.equal(String(_url), config.tokenEndpoint); assert.equal(init?.method, "POST");
       posts++;
       assert.equal(p.files.read("oauth-exchange.json"), true);
       assert.equal(p.files.read("oauth-pending.json"), null);
@@ -52,6 +57,11 @@ test("explicit fresh PKCE sign-in supersedes an old intent, not its durable refr
     });
     assert.equal(posts, 1);
     assert.equal(p.files.read("oauth-exchange.json"), false);
+    assert.equal(p.files.read("oauth-code-exchange.json"), false);
+    const saved = p.files.read<{ codeCommit: { identity: unknown }; access: string; refresh: string; resource: string; clientId: string; issuer: string }>("tokens.json")!;
+    const { network_agent: _network, ...verified } = identity;
+    assert.deepEqual(saved.codeCommit.identity, verified);
+    assert.deepEqual({ access: saved.access, refresh: saved.refresh, resource: saved.resource, clientId: saved.clientId, issuer: saved.issuer }, { access: issued.access_token, refresh: issued.refresh_token, resource: old.resource, clientId: old.clientId, issuer: old.issuer });
     assert.equal(await new TokenClient(oauth, p.files, async () => assert.fail("No request needed")).token(), issued.access_token);
     await assert.rejects(client.completeAuthorization(callback(fresh)), /OAUTH_CALLBACK_REFUSED/);
     assert.equal(posts, 1);
@@ -71,6 +81,7 @@ const failures: [string, Fetch][] = [
 for (const [name, fail] of failures) test(`${name} never permits refresh/code replay, but a new explicit authorization can recover`, async () => {
   const p = profile(); let calls = 0;
   try {
+    p.files.acquire();
     p.files.write("tokens.json", old);
     const broken = new TokenClient(oauth, p.files, async (...args) => { calls++; return fail(...args); });
     await assert.rejects(broken.token());
@@ -83,7 +94,11 @@ for (const [name, fail] of failures) test(`${name} never permits refresh/code re
     assert.equal(p.files.read("oauth-pending.json"), null);
     assert.equal(p.files.read("oauth-exchange.json"), true);
     assert.deepEqual(p.files.read("tokens.json"), old);
+    assert.equal(p.files.read<{ phase: string }>("oauth-code-exchange.json")!.phase, "dispatch-uncertain");
+    assert.equal(broken.exchangeState(), "fenced");
     const restarted = new TokenClient(oauth, p.files, async (_url, init) => {
+      if (String(_url) === `${config.origin}/api/identity`) return response(identity);
+      assert.equal(String(_url), config.tokenEndpoint); assert.equal(init?.method, "POST");
       calls++;
       assert.equal(new URLSearchParams(String(init?.body)).get("grant_type"), "authorization_code");
       return response(issued);
@@ -101,10 +116,17 @@ for (const [name, fail] of failures) test(`${name} never permits refresh/code re
 test("fresh sign-in does not overlap an active refresh, code exchange or identity acceptance", async () => {
   const p = profile(), network = deferred<Response>(), accept = deferred<void>(); let calls = 0;
   try {
+    p.files.acquire();
     p.files.write("tokens.json", old);
-    const client = new TokenClient(oauth, p.files, async () => { calls++; return calls === 1 ? network.promise : response(issued); });
+    const client = new TokenClient(oauth, p.files, async (url, init) => {
+      if (String(url) === `${config.origin}/api/identity`) return response(identity);
+      assert.equal(String(url), config.tokenEndpoint); assert.equal(init?.method, "POST");
+      calls++; return calls === 1 ? network.promise : response(issued);
+    });
     const stale = client.authorizationUrl();
     const refreshing = client.token();
+    // Discovery is asynchronous even when this synthetic issuer has no recovery capability.
+    await Promise.resolve();
     const failedRefresh = assert.rejects(refreshing, /TRANSPORT_FAILED/);
     assert.throws(() => client.authorizationUrl({ fresh: true }), /OAUTH_EXCHANGE_IN_PROGRESS/);
     await assert.rejects(client.completeAuthorization(callback(stale)), /OAUTH_EXCHANGE_IN_PROGRESS/);
@@ -127,15 +149,22 @@ test("identity rejection and stale ownership cannot save recovered tokens or cle
   for (const mode of ["identity", "generation"]) {
     const p = profile(); let alive = true;
     try {
-      p.files.write("tokens.json", old); p.files.write("oauth-exchange.json", true);
-      const client = new TokenClient(oauth, p.files, async () => response(issued), Date.now, () => { if (!alive) throw new SafeError("SESSION_REPLACED"); });
+      p.files.acquire();
+      const originalFence = { ...newExchange({ ...refreshBinding(oauth), issuer: "https://app.krishnan.ca", tokenEndpoint: "https://app.krishnan.ca/oauth/token", resource: "https://concourse.krishnan.ca" }, old.refresh, p.files.consumerEpoch()), phase: "locked" };
+      p.files.write("tokens.json", old); p.files.write("oauth-exchange.json", originalFence);
+      const client = new TokenClient(oauth, p.files, async (url, init) => {
+        if (String(url) === `${config.origin}/api/identity`) return response(identity);
+        assert.equal(String(url), config.tokenEndpoint); assert.equal(init?.method, "POST"); return response(issued);
+      }, Date.now, () => { if (!alive) throw new SafeError("SESSION_REPLACED"); });
       const fresh = client.authorizationUrl({ fresh: true });
       await assert.rejects(client.completeAuthorization(callback(fresh), async () => {
         if (mode === "identity") throw new SafeError("V3_IDENTITY_REFUSED");
         alive = false;
       }), mode === "identity" ? /V3_IDENTITY_REFUSED/ : /SESSION_REPLACED/);
       assert.deepEqual(p.files.read("tokens.json"), old);
-      assert.equal(p.files.read("oauth-exchange.json"), true);
+      assert.deepEqual(p.files.read("oauth-exchange.json"), originalFence);
+      assert.equal(p.files.read<{ phase: string }>("oauth-code-exchange.json")!.phase, "dispatch-uncertain");
+      assert.equal(client.exchangeState(), "fenced");
       assert.equal(p.files.read("oauth-pending.json"), null);
     } finally { p.cleanup(); }
   }
@@ -144,6 +173,7 @@ test("identity rejection and stale ownership cannot save recovered tokens or cle
 test("fresh recovery still refuses expired callbacks and changed credential/pending bindings", async () => {
   const p = profile(); let now = 1000;
   try {
+    p.files.acquire();
     p.files.write("tokens.json", old); p.files.write("oauth-exchange.json", true);
     const client = new TokenClient(oauth, p.files, async () => assert.fail("No request permitted"), () => now);
     const fresh = client.authorizationUrl({ fresh: true });
@@ -163,8 +193,13 @@ test("a failed recovered-token save consumes its code but keeps the old token an
   const p = profile(); let posts = 0;
   const write = p.files.write.bind(p.files);
   try {
+    p.files.acquire();
     p.files.write("tokens.json", old); p.files.write("oauth-exchange.json", true);
-    const client = new TokenClient(oauth, p.files, async () => { posts++; return response(issued); });
+    const fetchImpl: Fetch = async (url, init) => {
+      if (String(url) === `${config.origin}/api/identity`) return response(identity);
+      assert.equal(String(url), config.tokenEndpoint); assert.equal(init?.method, "POST"); posts++; return response(issued);
+    };
+    const client = new TokenClient(oauth, p.files, fetchImpl);
     const fresh = client.authorizationUrl({ fresh: true });
     p.files.write = (name, value) => { if (name === "tokens.json") throw new Error("synthetic disk failure"); write(name, value); };
     await assert.rejects(client.completeAuthorization(callback(fresh)), /synthetic disk failure/);
@@ -173,34 +208,66 @@ test("a failed recovered-token save consumes its code but keeps the old token an
     assert.equal(p.files.read("oauth-exchange.json"), true);
     assert.equal(p.files.read("oauth-pending.json"), null);
     p.files.write = write;
-    await assert.rejects(client.completeAuthorization(callback(fresh)), /OAUTH_CALLBACK_REFUSED/);
-    await assert.rejects(client.token(), /OAUTH_EXCHANGE_UNCERTAIN/);
-    const next = client.authorizationUrl({ fresh: true });
-    await client.completeAuthorization(callback(next));
+    await assert.rejects(client.completeAuthorization(callback(fresh)), /OAUTH_STORAGE_UNCERTAIN/);
+    assert.throws(() => client.token(), /OAUTH_STORAGE_UNCERTAIN/);
+    assert.throws(() => client.authorizationUrl({ fresh: true }), /OAUTH_STORAGE_UNCERTAIN/);
+    const restarted = new TokenClient(oauth, p.files, fetchImpl);
+    assert.equal(p.files.read<{ phase: string }>("oauth-code-exchange.json")!.phase, "committing");
+    assert.equal(restarted.exchangeState(), "fenced");
+    await assert.rejects(restarted.token(), /OAUTH_EXCHANGE_UNCERTAIN/);
+    await assert.rejects(restarted.completeAuthorization(callback(fresh)), /OAUTH_CALLBACK_REFUSED/);
+    assert.equal(posts, 1);
+    const next = restarted.authorizationUrl({ fresh: true });
+    await restarted.completeAuthorization(callback(next));
     assert.equal(posts, 2);
   } finally { p.files.write = write; p.cleanup(); }
 });
 
-test("fence-clear failure after token commit preserves new credentials without permitting replay", async () => {
+for (const boundary of ["oauth-exchange.json", "oauth-code-exchange.json"]) test(`${boundary} clear failure after token commit preserves credentials without permitting replay`, async () => {
   const p = profile(); let posts = 0, now = 1000;
   const write = p.files.write.bind(p.files);
   try {
+    const release = p.files.acquire();
     write("tokens.json", old); write("oauth-exchange.json", true);
-    const client = new TokenClient(oauth, p.files, async () => { posts++; return response(issued); }, () => now);
+    const client = new TokenClient(oauth, p.files, async (url, init) => {
+      if (String(url) === `${config.origin}/api/identity`) return response(identity);
+      assert.equal(String(url), config.tokenEndpoint); assert.equal(init?.method, "POST"); posts++; return response(issued);
+    }, () => now);
     const fresh = client.authorizationUrl({ fresh: true });
-    p.files.write = (name, value) => { if (name === "oauth-exchange.json" && value === false) throw new Error("synthetic fence-clear failure"); write(name, value); };
+    p.files.write = (name, value) => { if (name === boundary && value === false) throw new Error("synthetic fence-clear failure"); write(name, value); };
     let accepted = false;
     await assert.rejects(client.completeAuthorization(callback(fresh), async () => { accepted = true; }), /fence-clear failure/);
     assert.equal(accepted, true);
     assert.equal(p.files.read<{ access: string }>("tokens.json")!.access, issued.access_token);
-    assert.equal(p.files.read("oauth-exchange.json"), true);
+    assert.equal(p.files.read("oauth-exchange.json"), boundary === "oauth-exchange.json");
+    assert.equal(p.files.read<{ phase: string }>("oauth-code-exchange.json")!.phase, "committing");
     assert.equal(p.files.read("oauth-pending.json"), null);
     p.files.write = write;
-    const restarted = new TokenClient(oauth, p.files, async () => assert.fail("No replay permitted"), () => now);
+    assert.throws(() => client.token(), /OAUTH_STORAGE_UNCERTAIN/);
+    const resume = () => new TokenClient(oauth, p.files, async (_url, init) => {
+      assert.equal(new URLSearchParams(String(init?.body)).get("grant_type"), "refresh_token");
+      posts++; throw new Error("synthetic refresh lost");
+    }, () => now);
+    let restarted = resume();
+    assert.equal(restarted.exchangeState(), "clear");
+    release();
+    assert.throws(() => restarted.token(), /OAUTH_RESPONSE_SUPERSEDED/);
+    assert.equal(p.files.read<{ phase: string }>("oauth-code-exchange.json")!.phase, "committing");
+    p.files.acquire();
+    assert.throws(() => restarted.token(), /OAUTH_RESPONSE_SUPERSEDED/);
+    restarted = resume();
     assert.equal(await restarted.token(), issued.access_token);
+    assert.equal(p.files.read("oauth-exchange.json"), false);
+    assert.equal(p.files.read("oauth-code-exchange.json"), false);
+    // Once reconciliation has finished, ordinary cached reads are ownership-free.
+    const reader = new PrivateFiles(p.root);
+    try { assert.equal(await new TokenClient(oauth, reader, async () => assert.fail("No HTTP for cache"), () => now).token(), issued.access_token); }
+    finally { reader.close(); }
     await assert.rejects(restarted.completeAuthorization(callback(fresh)), /OAUTH_CALLBACK_REFUSED/);
-    now += 3_600_000;
-    await assert.rejects(restarted.token(), /OAUTH_EXCHANGE_UNCERTAIN/);
     assert.equal(posts, 1);
+    now += 3_600_000;
+    await assert.rejects(restarted.token(), /TRANSPORT_FAILED/);
+    await assert.rejects(restarted.token(), /OAUTH_EXCHANGE_UNCERTAIN/);
+    assert.equal(posts, 2);
   } finally { p.files.write = write; p.cleanup(); }
 });

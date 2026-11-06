@@ -20,12 +20,14 @@ async function fixture() {
   p.files.write("config.json", c); p.files.write("tokens.json", oldTokens); p.files.write("ledger.json", { preserved: "synthetic-ledger" });
   const snapshot = () => ["config.json", "tokens.json", "ledger.json"].map(name => readFileSync(join(p.root, name), "utf8"));
   const before = snapshot();
+  const release = p.files.acquire();
   const oldState = new URL(new TokenClient(c, p.files).authorizationUrl()).searchParams.get("state");
   // Reproduce a lost rotating refresh with synthetic transport, not a fabricated marker.
   let refreshes = 0;
   const lost: Fetch = async (_input, init) => { assert.equal(new URLSearchParams(String(init?.body)).get("grant_type"), "refresh_token"); refreshes++; throw new Error("synthetic-private-network-detail"); };
   await assert.rejects(new TokenClient(c, p.files, lost).token(), /TRANSPORT_FAILED/);
   assert.equal(refreshes, 1); assert.equal(p.files.read("oauth-exchange.json"), true);
+  release(); // login() owns its own consumer lock.
   const assertPreserved = () => { assert.deepEqual(snapshot(), before); assert.equal(p.files.read("oauth-exchange.json"), true); };
   const assertReleased = async () => { const release = p.files.acquire(); release(); const probe = new Loopback(); try { await probe.bind(port); } finally { await probe.close(); } };
   return { ...p, c, oldState, before, snapshot, assertPreserved, assertReleased };
@@ -54,7 +56,7 @@ test("actual CLI recovers uncertain refresh via fresh S256 once-only code and ex
         return response({ access_token: "synthetic-new-access", refresh_token: "synthetic-new-refresh", token_type: "Bearer", expires_in: 3600 });
       }
       assert.equal(url, `${f.c.origin}/api/identity`); assert.equal(init?.method, "GET");
-      assert.equal(new Headers(init?.headers).get("Concourse-Organization"), f.c.organization);
+      assert.equal(new Headers(init?.headers).get("Concourse-Organization"), calls.filter(url => url === `${f.c.origin}/api/identity`).length === 1 ? null : f.c.organization);
       assert.equal(new Headers(init?.headers).get("authorization"), "Bearer synthetic-new-access");
       f.assertPreserved(); // Identity acceptance precedes token replacement.
       return response(identity);
@@ -81,10 +83,14 @@ test("actual CLI recovers uncertain refresh via fresh S256 once-only code and ex
       }
     }, { fetchImpl, open: async () => { assert.fail("--no-open must not launch browser"); } });
     assert.equal(result, 0); assert.equal(await browser, 200);
-    assert.deepEqual(calls, [f.c.tokenEndpoint, `${f.c.origin}/api/identity`]);
+    assert.deepEqual(calls, [f.c.tokenEndpoint, `${f.c.origin}/api/identity`, `${f.c.origin}/api/identity`]);
     assert.deepEqual(output.map(line => JSON.parse(line).phase), ["authorization", "complete"]);
     assert.equal(f.files.read("oauth-exchange.json"), false);
     assert.equal(f.files.read<{ access: string }>("tokens.json")!.access, "synthetic-new-access");
+    const saved = f.files.read<{ codeCommit: { identity: unknown } }>("tokens.json")!;
+    const { network_agent: _network, ...verified } = identity;
+    assert.deepEqual(saved.codeCommit.identity, verified);
+    assert.equal(f.files.read("oauth-code-exchange.json"), false);
     assert.equal(f.snapshot()[0], f.before[0]); assert.equal(f.snapshot()[2], f.before[2]);
     assert.doesNotMatch(output.join("\n"), /synthetic-(?:new|old)-(?:access|refresh)|synthetic-private-code|code_verifier/);
     await f.assertReleased();
@@ -105,6 +111,8 @@ for (const mismatch of ["owner", "organization", "handle", "oauth_client_id", "r
         output.push(line); const event = JSON.parse(line); if (event.phase === "authorization") browser = fetch(callback(event.actionUrl)).then(r => r.status);
       }, { fetchImpl }), 1);
       assert.equal(await browser, 400); assert.equal(posts, 1); f.assertPreserved(); await f.assertReleased();
+      assert.equal(new TokenClient(f.c, f.files).exchangeState(), "fenced");
+      assert.equal(f.files.read<{ phase: string }>("oauth-code-exchange.json")!.phase, "dispatch-uncertain");
       assert.doesNotMatch(output.join("\n"), /synthetic-private|synthetic-new/);
       assert.equal(JSON.parse(output.at(-1)!).error, mismatch === "failed" ? "HTTP_REFUSED_500" : "V3_IDENTITY_REFUSED");
     } finally { f.cleanup(); }

@@ -74,6 +74,130 @@ or reply ID; reconcile them, never resend. A receipt with no record proves
 non-delivery only two minutes after the original send; reconcile-send then reports
 NOT_DELIVERED, and a new message is safe.
 
+## Private local health (schema version 1)
+
+Each extension consumer writes `health.json` through `PrivateFiles`, under its
+existing profile lock (mode 0600, maximum 16 KiB). This adds no polling, locks,
+model turns or execution claims. The file contains the exact configured origin,
+organization, owner and agent; session ID; a fresh generation ID; millisecond
+`startedAt`/`updatedAt`; and `lifecycle` (`running` or `stopped`). A generation
+starts with unknown channels and never inherits previous success.
+
+Independent `identity`, `inbox` and `answers` sections contain `state`
+(`unknown`, `checking`, `ok`, `failed`), `lastAttemptAt`, `lastSuccessAt`,
+`failureStartedAt` and a bounded uppercase `code` when applicable. Only
+`SafeError.code` is retained; other errors use `LOCAL_OPERATION_FAILED`. No
+error messages/details, tokens, correspondence IDs, cursors or peer content
+are included. Treat this file as private: configured identities are not public
+telemetry.
+
+Channel meanings are deliberately narrow:
+
+- Identity success means the identity GET body passed the configured-identity
+  validation, not merely HTTP 200 or a usable token.
+- Inbox success means this refresh's bounded head and optional saved-tail reads
+  were durably processed. It does not mean the backlog drained. Head delivery
+  still precedes tail I/O. An eligible failed tail does not block answer sweeping.
+- Answers success means this bounded sweep returned successfully, including an
+  empty sweep. It does not mean any Task completed or follow-up is guaranteed.
+- `blockedInbox` and `blockedAnswers` count quarantined tasks separately. A
+  channel's `ok` result cannot override its nonzero blocked count.
+
+Readers must reject unknown versions/malformed or missing files, mismatched
+configured identity/generation, non-running lifecycle, unknown/checking/failed
+channels and blocked counts. Evaluate freshness at read time: `updatedAt` and
+each channel's `lastAttemptAt` must be no more than `staleAfterMs` (180000 ms)
+old; a future update or channel attempt is invalid. `channelState` in `src/health.ts` implements
+the channel/lifecycle/freshness checks. Never infer health from a file's presence
+or from identity success alone. Shutdown writes stopped before releasing the
+lock. If ownership is lost or that final write fails, the retained file ages to
+stale. A final observation failure does not block other profiles or reattachment.
+
+Health persistence is fail-closed, not advisory: failures invalidate the current
+generation before more intake or publication. Identity observations run before
+mail writes, outside transport/write classification. No post-publication health
+write turns an accepted or uncertain mail write into a replay-safe refusal.
+Snapshots never reset exchange fences, ledgers or cursors.
+
+### OAuth recovery warning
+
+A locked `oauth-exchange.json` fence (including the older boolean `true`), an
+unresolved `oauth-code-exchange.json`, `OAUTH_EXCHANGE_UNCERTAIN` or
+`OPERATOR_OAUTH_REQUIRED` produces a labelled UI warning, once per unresolved
+episode in a generation. Startup checks the fence even with a valid access token.
+A valid, matching schema 4 refresh journal with retry budget is resumable, not
+locked. Superseded schemas are never migrated or silently reset.
+`oauthCode` remains in health while recovery is required. A fence-free validated
+identity ends the episode; a later fence/required error can warn again. Warnings
+show host, owner/agent and organization, never token values or the private path.
+
+Recovery is **terminal only**, not a `/concourse-v3 login` slash command. Stop
+the existing consumer normally; from the checkout root run:
+
+```sh
+script/concourse-v3 login --profile /absolute/path/concourse-v3/profile [--no-open] [--json]
+```
+
+Then resume the same session. The warning does not stop the consumer, acquire
+another lock, retry an exchange or clear any file.
+
+
+## Marked refresh recovery (header contract version 1)
+
+This is source for a negotiated issuer extension, not evidence that an issuer
+advertises it or an installed session uses it. Exact-source review, release and
+both OAuth/OpenID discovery readbacks gate activation. This release still requires
+Linux private storage and kernel flock; it does not qualify a macOS build.
+
+Refresh tokens rotate. Losing a response does not make an ordinary token POST
+safe to repeat. The canonical issuer `https://app.krishnan.ca` must advertise the
+exact `concourse_refresh_idempotency` version 1 object, and the profile must
+have its full expected Concourse identity. Superseded form-field extensions are
+not negotiated. Only a new refresh may fall back to the old one-shot unmarked
+behavior if discovery fails or is unsupported; a saved operation stays fenced.
+
+Each marked logical rotation uses one fresh canonical UUIDv4 in a quoted
+`Idempotency-Key` Structured Field string. `Concourse-Refresh-Dispatch` is an
+unquoted increasing integer, 1–8. The private schema 4 journal reserves every
+POST durably before dispatch, under the profile's kernel lock and durable owner
+epoch. A crash after reservation still consumes that slot. Retries retain the
+same parent, client, resource, scope and key; the next rotation gets a new key.
+
+Only these outcomes can permit a later request with the same key:
+
+- Transport loss without a usable HTTP response, with total budget remaining.
+- An exact validated HTTP 409 problem response: matching version/key/ordinal,
+  `application/problem+json`, `Cache-Control: no-store`, `Retry-After: 1`, and
+  the issuer's in-progress type/error. The next request waits at least one second,
+  even after restart, then reserves its dispatch and conflict retry together.
+
+At most eight POSTs and four 409-triggered reservations are allowed per operation.
+If an initial 409 and its four conflict retries all return 409, the client stops
+after five POSTs. Dispatch count and generation are independent: dispatch 2 can
+return generation 1. The issuer permits at most four generations and alone
+enforces the non-sliding recovery window of at most 24 hours. No client clock
+or sleep detection decides whether that window remains open.
+
+Every non-409 HTTP refusal—including 408, 429 and 5xx—is nonretryable, even
+with Retry-After. Generic/malformed 409, withdrawn capability for a saved
+operation, malformed receipt, failed identity, exhausted budgets and unknown
+journals fail closed. Refused or locked profiles need explicit fresh sign-in;
+never erase files or replay authorization codes.
+
+A success must carry `concourse_refresh_idempotency` with exact version 1, key,
+dispatch, generation and `expires_at`. Before any result-induced mutation,
+including refusals, the client checks the live operation, latest ordinal, tokens
+and captured owner epoch. It rechecks after identity validation. Stale results
+cannot install credentials, fence a newer operation or clear its journal.
+
+A commit-ready journal records the validated receipt and verified identity.
+Tokens and their full matching receipt/identity are saved atomically before
+journal clearing. An interrupted clear reconciles only that exact durable proof,
+even after the access token expires. Changed credentials alone prove nothing.
+Fresh PKCE recovery retains the original refresh fence until verified success;
+its separate code journal never authorizes code replay. Local storage failures
+stop the current token client rather than being classified as transport loss.
+
 ## Client revisions carried here
 
 - 359230a: peer-mail guideline clarifies that no-ACK does not stop authorised owner

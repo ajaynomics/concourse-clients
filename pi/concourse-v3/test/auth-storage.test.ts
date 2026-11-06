@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, linkSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { TokenClient, validateConfig, type Config } from "../src/auth.ts";
 import { Lifetime } from "../src/lifetime.ts";
 import { PrivateFiles } from "../src/storage.ts";
-import { config, deferred, profile, response } from "./helpers.ts";
+import { config, deferred, identity, profile, response } from "./helpers.ts";
 
 const oauth = (): Config => ({ ...config, authorizationEndpoint: "https://issuer.invalid/authorize", auth: { kind: "oauth", redirectUri: "http://127.0.0.1:4555/callback" } });
 const token = { access_token: "synthetic.token", token_type: "Bearer", expires_in: 3600, scope: "concourse" };
@@ -31,7 +31,10 @@ test("config refuses insecure origin, wrong issuer token origin, excess identity
 test("OAuth PKCE/state/resource/issuer and fifteen-minute intent expiry; no listeners", async () => {
   const p = profile(); let now = 1_000, exchanges = 0;
   try {
+    p.files.acquire();
     const client = new TokenClient(oauth(), p.files, async (_url, init) => {
+      if (String(_url) === `${config.origin}/api/identity`) return response(identity);
+      assert.equal(String(_url), config.tokenEndpoint); assert.equal(init?.method, "POST");
       exchanges++; const form = new URLSearchParams(String(init?.body)); assert.equal(form.get("grant_type"), "authorization_code"); assert.equal(form.get("code_verifier")?.length, 43); assert.equal(form.get("resource"), config.origin);
       return response({ ...token, refresh_token: "synthetic.refresh" });
     }, () => now);
@@ -48,6 +51,7 @@ test("OAuth PKCE/state/resource/issuer and fifteen-minute intent expiry; no list
 test("rotating refresh timeout/invalid response is durably uncertain and never retried", async () => {
   const p = profile(); let calls = 0;
   try {
+    p.files.acquire();
     p.files.write("tokens.json", { access: "old", refresh: "rotating", expires: 1, resource: config.origin, clientId: config.oauthClientId, issuer: config.issuer });
     const client = new TokenClient(oauth(), p.files, async () => { calls++; throw new Error("synthetic timeout"); });
     await assert.rejects(client.token(), /TRANSPORT_FAILED/); assert.equal(p.files.read("oauth-exchange.json"), true);
@@ -83,7 +87,10 @@ test("private files are opened-FD checked, bounded, owned, atomic and refuse sym
 test("one consumer uses kernel-owned lock, release never deletes replacement inode or trusts PID", () => {
   const p = profile();
   try {
-    const release = p.files.acquire(); assert.throws(() => p.files.acquire(), /already owned/);
+    const release = p.files.acquire(), epoch = p.files.consumerEpoch();
+    assert.deepEqual(p.files.read("oauth-owner.json"), { version: 1, epoch });
+    assert.throws(() => p.files.acquire(), /already owned/);
+    assert.equal(p.files.ownsConsumer(), true); assert.equal(p.files.consumerEpoch(), epoch);
     renameSync(join(p.root, "consumer.json"), join(p.root, "old.json"));
     writeFileSync(join(p.root, "consumer.json"), JSON.stringify({ pid: process.pid, reservation: "PID-reuse-is-irrelevant" }), { mode: 0o600 });
     assert.equal(p.files.ownsConsumer(), false); assert.throws(() => p.files.read("tokens.json"), /lock replaced/);
@@ -100,7 +107,13 @@ test("kernel releases a synthetic crashed consumer without stale lease/PID reuse
     const exit = once(child, "exit");
     await Promise.race([once(child, "message"), exit.then(() => { throw new Error(`Synthetic child failed before IPC: ${diagnostic}`); })]);
     const [code] = await exit; assert.equal(code, 7);
-    const release = p.files.acquire(); release();
+    const release = p.files.acquire(), epoch = p.files.consumerEpoch();
+    const inode = statSync(join(p.root, "consumer.json")).ino; release();
+    assert.deepEqual(p.files.read("oauth-owner.json"), { version: 1, epoch });
+    const next = p.files.acquire();
+    assert.notEqual(p.files.consumerEpoch(), epoch);
+    assert.equal(statSync(join(p.root, "consumer.json")).ino, inode); next();
+    assert.equal(statSync(join(p.root, "consumer.json")).ino, inode);
   } finally { p.cleanup(); }
 });
 test("descriptor-rooted store refuses renamed/replaced profile", () => {

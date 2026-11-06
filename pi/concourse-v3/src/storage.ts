@@ -51,7 +51,7 @@ export class PrivateFiles {
   private directory: number;
   private identity: Stats;
   private closed = false;
-  private lock?: { fd: number; identity: Stats };
+  private lock?: { fd: number; identity: Stats; epoch: string };
   constructor(root: string) {
     this.root = privateRoot(root);
     if (process.platform !== "linux") throw new Error("V3 private storage requires Linux kernel flock");
@@ -69,7 +69,14 @@ export class PrivateFiles {
       if (lock.dev !== this.lock.identity.dev || lock.ino !== this.lock.identity.ino) throw new Error("Consumer lock replaced; old owner fenced");
     }
   }
-  ownsConsumer(): boolean { try { this.check(); return !!this.lock; } catch { return false; } }
+  ownsConsumer(epoch?: string): boolean { try { this.check(); return !!this.lock && (epoch === undefined || this.consumerEpoch() === epoch); } catch { return false; } }
+  consumerEpoch(): string {
+    this.check();
+    if (!this.lock) throw new Error("OAuth exchange requires the profile consumer lock");
+    const owner = this.read<{ version: number; epoch: string }>("oauth-owner.json");
+    if (owner?.version !== 1 || owner.epoch !== this.lock.epoch || Object.keys(owner).length !== 2) throw new Error("OAuth profile owner epoch changed");
+    return this.lock.epoch;
+  }
   close(): void { if (!this.closed) { if (this.lock) { closeSync(this.lock.fd); this.lock = undefined; } this.closed = true; closeSync(this.directory); } }
   read<T>(name: string): T | undefined {
     const path = this.path(name);
@@ -96,6 +103,7 @@ export class PrivateFiles {
     } finally { closeSync(fd); if (existsSync(tmp)) unlinkSync(tmp); }
   }
   acquire(): () => void {
+    if (this.lock) throw new Error("V3 consumer already owned");
     const path = this.path("consumer.json");
     const fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
     try {
@@ -105,8 +113,11 @@ export class PrivateFiles {
       const result = spawnSync("/usr/bin/flock", ["--exclusive", "--nonblock", "3"], { stdio: ["ignore", "ignore", "ignore", fd] });
       if (result.error || result.status !== 0) throw new Error("V3 consumer already owned or kernel flock unavailable");
       this.check();
-      this.lock = { fd, identity: fstatSync(fd) };
-    } catch (e) { closeSync(fd); throw e; }
+      this.lock = { fd, identity: fstatSync(fd), epoch: randomUUID() };
+      // A durable epoch fences callbacks even after this same object reacquires
+      // the same flock inode. The inode itself must never be replaced.
+      this.write("oauth-owner.json", { version: 1, epoch: this.lock.epoch });
+    } catch (e) { this.lock = undefined; closeSync(fd); throw e; }
     let released = false;
     return () => { if (!released) { released = true; if (this.lock?.fd === fd) { this.lock = undefined; closeSync(fd); } } };
   }

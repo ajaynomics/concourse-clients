@@ -30,7 +30,11 @@ export async function boundedBytes(response: Response, limit = 1024 * 1024): Pro
   return Buffer.concat(chunks, size);
 }
 export function safeFetch(origin: string, fetchImpl: Fetch = fetch): Fetch { return boundedFetch(origin, fetchImpl); }
-function boundedFetch(origin: string, fetchImpl: Fetch, identityErrors = false): Fetch {
+// Only marked refresh dispatches may inspect a 409 body; other refusals remain opaque.
+export function refreshFetch(endpoint: string, fetchImpl: Fetch = fetch): Fetch {
+  const url = httpsUrl(endpoint); return boundedFetch(url.origin, fetchImpl, false, url.href);
+}
+function boundedFetch(origin: string, fetchImpl: Fetch, identityErrors = false, refreshEndpoint?: string): Fetch {
   const expected = httpsUrl(origin).origin;
   return async (input, init = {}) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
@@ -39,21 +43,39 @@ function boundedFetch(origin: string, fetchImpl: Fetch, identityErrors = false):
     if (typeof init.body === "string" && Buffer.byteLength(init.body) > 512 * 1024) throw new SafeError("REQUEST_TOO_LARGE");
     const deadline = AbortSignal.timeout(15_000);
     const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    let responseStatus: number | undefined;
     try {
-      const response = await fetchImpl(url, { ...init, signal, redirect: "error" });
-      if (response.redirected || (response.url && new URL(response.url).origin !== expected) || (response.status >= 300 && response.status < 400)) throw new SafeError("REDIRECT_REFUSED", write);
+      const refreshResponse = refreshEndpoint !== undefined && url.href === refreshEndpoint && init.method === "POST";
+      // Native fetch hides 3xx as transport errors in error mode. Expose their
+      // status without following them, so a refusal cannot authorize a retry.
+      const response = await fetchImpl(url, { ...init, signal, redirect: refreshResponse ? "manual" : "error" });
+      responseStatus = response.status;
+      if (response.redirected || (response.url && new URL(response.url).origin !== expected) || (response.status >= 300 && response.status < 400)) {
+        void response.body?.cancel().catch(() => {}); throw new SafeError("REDIRECT_REFUSED", write);
+      }
+      if (refreshResponse && response.url && response.url !== refreshEndpoint) throw new SafeError("DESTINATION_REFUSED", write);
       let headerBytes = 0; response.headers.forEach((v, k) => { headerBytes += Buffer.byteLength(k) + Buffer.byteLength(v); });
       if (headerBytes > 16 * 1024) { await response.body?.cancel(); throw new SafeError("HEADERS_TOO_LARGE", write); }
       // Error bodies are unneeded and untrusted; keep auth/service status even if their content is oversized.
-      if (!response.ok && !(identityErrors && init.method === "GET" && url.pathname === "/api/identity" && !url.search && [403, 409].includes(response.status))) {
+      const refreshConflict = refreshResponse && response.status === 409;
+      if (!response.ok && !refreshConflict && !(identityErrors && init.method === "GET" && url.pathname === "/api/identity" && !url.search && [403, 409].includes(response.status))) {
         await response.body?.cancel().catch(() => {});
         throw new SafeError(`HTTP_REFUSED_${response.status}`, write && response.status >= 500, response.status);
       }
-      const bytes = await boundedBytes(response, identityErrors ? 32 * 1024 : 1024 * 1024);
+      let bytes: Uint8Array;
+      try { bytes = await boundedBytes(response, (identityErrors || refreshResponse) ? 32 * 1024 : 1024 * 1024); }
+      catch (e) {
+        // Headers were received: a broken/oversized refusal is not transport loss
+        // without an HTTP response and cannot authorize another refresh dispatch.
+        if (refreshResponse && !response.ok) throw new SafeError("INVALID_REFRESH_CONFLICT", false, response.status);
+        if (refreshResponse) throw new SafeError("INVALID_REFRESH_RESPONSE", false, response.status);
+        throw e;
+      }
       // Buffered responses keep SDK clones and parsing bounded, without exposing remote error text.
-      return new Response(bytes as BodyInit, { status: response.status, headers: response.headers });
+      return new Response(refreshResponse && [204, 205].includes(response.status) ? null : bytes as BodyInit, { status: response.status, headers: response.headers });
     } catch (e) {
       if (e instanceof SafeError) throw e;
+      if (refreshEndpoint !== undefined && responseStatus !== undefined) throw new SafeError("INVALID_REFRESH_RESPONSE", false, responseStatus);
       throw new SafeError("TRANSPORT_FAILED", write);
     }
   };

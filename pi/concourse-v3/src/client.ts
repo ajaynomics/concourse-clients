@@ -63,7 +63,7 @@ export class InboxReadError extends SafeError {
 
 export class Client {
   readonly fetch: Fetch;
-  constructor(readonly config: Config, private getToken: () => Promise<string>, fetchImpl: Fetch = fetch, private alive: () => boolean = () => true) { this.fetch = safeFetch(config.origin, fetchImpl); }
+  constructor(readonly config: Config, private getToken: () => Promise<string>, fetchImpl: Fetch = fetch, private alive: () => boolean = () => true, private observeIdentity: (event: { state: "attempt" } | { state: "success" } | { state: "failure"; error: unknown }) => void = () => {}) { this.fetch = safeFetch(config.origin, fetchImpl); }
   private check(): void { if (!this.alive()) throw new SafeError("SESSION_REPLACED"); }
   async request(method: string, path: string, body?: unknown, guard?: () => void): Promise<unknown> {
     this.check(); guard?.();
@@ -73,10 +73,16 @@ export class Client {
     this.check(); guard?.(); const value = await json(r); this.check(); guard?.(); return value;
   }
   async identity(): Promise<Identity> {
-    const b = await this.request("GET", "api/identity");
-    const c = this.config;
-    if (!object(b) || b.release_line !== 3 || b.organization !== c.organization || b.owner !== c.owner || b.handle !== c.agent || b.oauth_client_id !== c.oauthClientId || typeof b.agent_id !== "number" || !Number.isInteger(b.agent_id) || typeof b.network_agent !== "string" || !/^concourse\/network-[a-zA-Z0-9_-]+$/.test(b.network_agent)) throw new SafeError("V3_IDENTITY_REFUSED");
-    this.check(); return b as unknown as Identity;
+    this.check(); this.observeIdentity({ state: "attempt" });
+    let value: Identity;
+    try {
+      const b = await this.request("GET", "api/identity");
+      const c = this.config;
+      if (!object(b) || b.release_line !== 3 || b.organization !== c.organization || b.owner !== c.owner || b.handle !== c.agent || b.oauth_client_id !== c.oauthClientId || typeof b.agent_id !== "number" || !Number.isInteger(b.agent_id) || typeof b.network_agent !== "string" || !/^concourse\/network-[a-zA-Z0-9_-]+$/.test(b.network_agent)) throw new SafeError("V3_IDENTITY_REFUSED");
+      this.check(); value = b as unknown as Identity;
+    } catch (error) { this.observeIdentity({ state: "failure", error }); throw error; }
+    // Observation failures are local failures, outside transport/write classification.
+    this.observeIdentity({ state: "success" }); return value;
   }
   async reply(id: string, outcome: Outcome, guard?: () => void): Promise<Task> {
     validOutcome(outcome); await this.identity(); this.check(); guard?.();
