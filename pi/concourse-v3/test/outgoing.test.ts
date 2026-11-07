@@ -94,6 +94,21 @@ test("fair bounded sweep and persisted cursor survive churn and restart", async 
   await new Outbox(f.journal, f.client).sweep(2); assert.deepEqual(f.calls.slice(2), ["00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"]);
   await f.outbox.sweep(2); assert.equal(f.calls.at(-1), "00000000-0000-4000-8000-000000000004"); assert.equal(f.journal.value.cursors.answers, undefined);
 });
+test("an unfinished sent task is read every lap for an hour, then less often, then not after a week", async () => {
+  const f = fixture(), hour = 60 * 60_000; let now = 0;
+  const outbox = new Outbox(f.journal, f.client, () => {}, () => now);
+  await outbox.send("owner/peer", [{ text: "request" }]);
+  const polls = async (at: number) => { now = at; const before = f.calls.length; await outbox.sweep(); return f.calls.length - before; };
+  assert.equal(await polls(0), 1); assert.equal(await polls(60_000), 1);
+  // At ten hours old the task waits an hour between reads.
+  assert.equal(await polls(10 * hour), 1); assert.equal(await polls(10.5 * hour), 0);
+  f.set(answer("late", "TASK_STATE_WORKING")); assert.equal(await polls(11 * hour), 1);
+  assert.equal(outbox.offers().length, 1, "a late answer still arrives");
+  assert.equal(await polls(7 * 24 * hour), 0);
+  // Our own continuation makes the task current again.
+  await outbox.send("owner/peer", [{ text: "still there?" }], true, "00000000-0000-4000-8000-000000000001");
+  assert.equal(await polls(7 * 24 * hour + 60_000), 1);
+});
 test("unknown send preserves original parts/IDs/correlation and reconciles without send retry", async () => {
   const f = fixture(); let sends = 0;
   f.client.send = async () => { sends++; throw new SafeError("TIMEOUT", true); };

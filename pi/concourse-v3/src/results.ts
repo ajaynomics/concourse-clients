@@ -5,7 +5,7 @@ export function toolResult(name: string, value: unknown) {
   let visible: unknown = value;
   if (["send", "reply", "cancel"].includes(name)) {
     const raw = object(value) && "result" in value ? value.result : value;
-    visible = { ...(object(value) && typeof value.messageId === "string" ? { messageId: value.messageId } : {}), ...(object(value) && value.warning ? { warning: value.warning } : {}),
+    visible = { ...(object(value) && typeof value.messageId === "string" ? { messageId: value.messageId } : {}), ...(object(value) && value.warning ? { warning: value.warning } : {}), ...(object(value) && value.notice ? { notice: value.notice } : {}),
       ...(object(raw) && object(raw.status) ? { taskId: raw.id, contextId: raw.contextId, state: raw.status.state, message: raw.status.message, artifacts: raw.artifacts } : { response: raw }) };
   }
   const json = JSON.stringify(visible);

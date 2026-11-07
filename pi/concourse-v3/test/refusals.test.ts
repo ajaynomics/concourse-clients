@@ -42,23 +42,46 @@ test("a complete JSON-RPC error is a definite refusal with its code and reason, 
   assert.match(r.out.recovery, /Nothing was delivered/);
   assert.equal(f.ledger().outgoing[r.out.messageId].phase, "refused");
   assert.equal(JSON.stringify(r.out).includes("Invalid parameters"), false, "server text is not echoed");
+  const missing = await f.cli(["send", "--recipient", "other/sender", "--input", f.input({ parts: [{ text: "x" }] })], rpcError({ code: -32001, message: "Task not found", data: errorInfo("TASK_NOT_FOUND") }));
+  assert.equal(missing.posts, 1); assert.deepEqual([missing.out.error, missing.out.uncertain, missing.out.rpcCode], ["SEND_REFUSED", false, -32001]);
 });
 
-test("a send that continues a finished task says so, from the reason or from what the client knows", async t => {
+test("a message to a finished task starts one new task in the same context, and says so", async t => {
   const f = fixture(); t.after(f.cleanup);
   const send = () => ["send", "--recipient", "other/sender", "--input", f.input({ parts: [{ text: "more" }], taskId: TASK })];
   // Server with the TASK_TERMINAL ErrorInfo reason (A2A v1.0 §3.1.1 UnsupportedOperationError).
-  let r = await f.cli(send(), rpcError({ code: -32004, message: "Task is already in a terminal state", data: errorInfo("TASK_TERMINAL", "concourse.krishnan.ca") }));
-  assert.deepEqual([r.out.error, r.out.uncertain, r.out.rpcCode, r.out.reason, r.out.recovery, r.out.taskId], ["TASK_ALREADY_FINISHED", false, -32004, "TASK_TERMINAL", FINISHED, TASK]);
-  // Current server: a bare UNSUPPORTED_OPERATION; a read shows the task is terminal.
+  const terminal = rpcError({ code: -32004, message: "Task is already in a terminal state", data: errorInfo("TASK_TERMINAL", "concourse.krishnan.ca") });
   f.server.current = { ...task(), status: { state: "TASK_STATE_COMPLETED" } };
-  r = await f.cli(send(), rpcError({ code: -32004, message: "Unsupported operation", data: errorInfo("UNSUPPORTED_OPERATION") }));
-  assert.deepEqual([r.out.error, r.out.uncertain, r.out.reason, r.out.recovery], ["TASK_ALREADY_FINISHED", false, "UNSUPPORTED_OPERATION", FINISHED]);
+  const messages: { messageId: string; taskId?: string; contextId?: string }[] = [];
+  let r = await f.cli(send(), body => {
+    messages.push((body as unknown as { params: { message: typeof messages[0] } }).params.message);
+    return messages.length === 1 ? terminal(body) : response({ jsonrpc: "2.0", id: body.id, result: { task: { ...task(), id: OTHER } } });
+  });
+  assert.equal(r.code, 0); assert.equal(r.posts, 2);
+  assert.equal(messages[0].taskId, TASK); assert.ok(!messages[1].taskId);
+  assert.equal(messages[1].contextId, "context1"); assert.notEqual(messages[1].messageId, messages[0].messageId);
+  assert.equal(r.out.result.notice, `Task ${TASK} was already finished, so this message started a new task ${OTHER} in the same conversation.`);
+  // Only once: a second TASK_TERMINAL refusal is reported, not retried again.
+  r = await f.cli(send(), terminal);
+  assert.equal(r.posts, 2); assert.deepEqual([r.out.error, r.out.uncertain, r.out.recovery], ["TASK_ALREADY_FINISHED", false, FINISHED]);
+});
+
+test("other refusals to continue a task are reported, never retried as a new task", async t => {
+  const f = fixture(); t.after(f.cleanup);
+  const send = () => ["send", "--recipient", "other/sender", "--input", f.input({ parts: [{ text: "more" }], taskId: TASK })];
+  // Older server: a bare UNSUPPORTED_OPERATION; a read shows the task is terminal.
+  f.server.current = { ...task(), status: { state: "TASK_STATE_COMPLETED" } };
+  let r = await f.cli(send(), rpcError({ code: -32004, message: "Unsupported operation", data: errorInfo("UNSUPPORTED_OPERATION") }));
+  assert.equal(r.posts, 1); assert.deepEqual([r.out.error, r.out.uncertain, r.out.reason, r.out.recovery], ["TASK_ALREADY_FINISHED", false, "UNSUPPORTED_OPERATION", FINISHED]);
   // Not known to be terminal: still a definite refusal, with both likely causes.
   f.server.current = task("TASK_STATE_WORKING");
   r = await f.cli(send(), rpcError({ code: -32004, message: "Unsupported operation" }));
-  assert.deepEqual([r.out.error, r.out.uncertain, r.out.rpcCode], ["SEND_REFUSED", false, -32004]);
+  assert.equal(r.posts, 1); assert.deepEqual([r.out.error, r.out.uncertain, r.out.rpcCode], ["SEND_REFUSED", false, -32004]);
   assert.match(r.out.recovery, /without task_id.*use reply/);
+  for (const status of [404, 422]) {
+    r = await f.cli(send(), () => response({}, status));
+    assert.equal(r.posts, 1); assert.deepEqual([r.out.error, r.out.uncertain, r.out.status], ["SEND_REFUSED", false, status]);
+  }
   assert.ok(Object.values(f.ledger().outgoing).every(o => o.phase === "refused"));
 });
 
@@ -73,25 +96,31 @@ test("a received-task send refusal says use reply without a fallback read or ret
   assert.ok(!JSON.stringify(r.out).includes("private server text"));
 });
 
-test("anything short of a complete error response for our request stays uncertain", async t => {
+test("anything short of a complete error response stays uncertain; a lost response or 5xx is resent once", async t => {
   const f = fixture(); t.after(f.cleanup);
-  const bodies: ((body: { id: unknown }) => Response)[] = [
-    rpcError({ code: -32001, message: "Task not found" }, "some-other-request"),
-    body => response({ id: body.id, error: { code: -32001, message: "Task not found" } }),
-    rpcError({ code: "-32001", message: "Task not found" }),
-    rpcError({ code: -32001 }),
-    body => response({ jsonrpc: "2.0", id: body.id, error: { code: -32001, message: "x" }, result: {} }),
-    () => new Response("not JSON", { status: 200, headers: { "content-type": "application/json" } }),
-    () => response({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" } }, 503),
-    () => new Response("upstream down", { status: 502 }),
-    () => { throw new Error("connection reset after write"); },
+  const bodies: [(body: { id: unknown }) => Response, number][] = [
+    [rpcError({ code: -32001, message: "Task not found" }, "some-other-request"), 1],
+    [body => response({ id: body.id, error: { code: -32001, message: "Task not found" } }), 1],
+    [rpcError({ code: "-32001", message: "Task not found" }), 1],
+    [rpcError({ code: -32001 }), 1],
+    [body => response({ jsonrpc: "2.0", id: body.id, error: { code: -32001, message: "x" }, result: {} }), 1],
+    [() => new Response("not JSON", { status: 200, headers: { "content-type": "application/json" } }), 1],
+    [() => response({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" } }, 503), 2],
+    [() => new Response("upstream down", { status: 502 }), 2],
+    [() => { throw new Error("connection reset after write"); }, 2],
   ];
-  for (const post of bodies) {
-    const r = await f.cli(["send", "--recipient", "other/sender", "--input", f.input({ parts: [{ text: "x" }] })], post);
-    assert.equal(r.posts, 1); assert.equal(r.out.uncertain, true, JSON.stringify(r.out));
+  for (const [post, posts] of bodies) {
+    const ids: unknown[] = [];
+    const r = await f.cli(["send", "--recipient", "other/sender", "--input", f.input({ parts: [{ text: "x" }] })], body => { ids.push((body as unknown as { params: { message: { messageId: string } } }).params.message.messageId); return post(body); });
+    assert.equal(r.posts, posts); assert.equal(new Set(ids).size, 1, "a resend keeps the same messageId");
+    assert.equal(r.out.uncertain, true, JSON.stringify(r.out));
     assert.match(r.out.error, /^SEND_UNCONFIRMED_OR_REFUSED messageId=/);
   }
   assert.ok(Object.values(f.ledger().outgoing).every(o => o.phase === "uncertain"));
+  // The server dedupes on messageId, so a resend that succeeds is ordinary acceptance.
+  let attempts = 0;
+  const r = await f.cli(["send", "--recipient", "other/sender", "--input", f.input({ parts: [{ text: "x" }] })], body => ++attempts === 1 ? new Response("upstream down", { status: 502 }) : response({ jsonrpc: "2.0", id: body.id, result: { task: task() } }));
+  assert.equal(r.code, 0); assert.equal(r.posts, 2); assert.equal(f.ledger().outgoing[r.out.result.messageId].phase, "accepted");
 });
 
 test("cancel and reply refusals are definite; reply to a finished task says so", async t => {
@@ -126,8 +155,8 @@ test("rpcRefusal keeps only the numeric code and a well-formed ErrorInfo reason"
   assert.deepEqual(rpcRefusal(body({ code: -32002, message: "m", data: errorInfo("TASK_NOT_CANCELABLE") }), "X")!.details, { rpcCode: -32002, reason: "TASK_NOT_CANCELABLE" });
   assert.deepEqual(rpcRefusal(body({ code: -32002, message: "m", data: errorInfo("not a reason\u001b") }), "X")!.details, { rpcCode: -32002 });
   assert.deepEqual(rpcRefusal(body({ code: -32002, message: "m", data: [{ reason: "NO_TYPE" }] }), "X")!.details, { rpcCode: -32002 });
-  // Task not found can follow a save when membership changes mid-request.
-  assert.equal(rpcRefusal(body({ code: -32001, message: "m", data: errorInfo("TASK_NOT_FOUND") }), "X"), undefined);
+  // Concourse raises task not found before saving anything when the send returns at once.
+  assert.deepEqual(rpcRefusal(body({ code: -32001, message: "m", data: errorInfo("TASK_NOT_FOUND") }), "X")!.details, { rpcCode: -32001, reason: "TASK_NOT_FOUND" });
   assert.equal(rpcRefusal(undefined, "X"), undefined);
   assert.equal(rpcRefusal({ id: undefined, body: { jsonrpc: "2.0", error: { code: 1, message: "m" } } }, "X"), undefined);
 });

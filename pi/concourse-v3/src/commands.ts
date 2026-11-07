@@ -91,7 +91,7 @@ export function commandSummary(command: string, result: unknown): string {
   const target = object(value.result) ? value.result : object(value.task) ? value.task : value;
   const ids = Object.fromEntries(["messageId", "id", "taskId"].flatMap(k => typeof value[k] === "string" ? [[k, value[k]]] : typeof target[k] === "string" ? [[k, target[k]]] : []));
   if (object(target.status) && typeof target.status.state === "string") ids.state = target.status.state;
-  return `${command}: success${Object.keys(ids).length ? ` ${JSON.stringify(ids)}` : ""}${Array.isArray(value.tasks) ? ` (${value.tasks.length} tasks; next page: ${!!value.nextPageToken})` : ""}${typeof value.warning === "string" ? "; accepted, local save failed; do not repeat" : ""}; use --json for full result`;
+  return `${command}: success${Object.keys(ids).length ? ` ${JSON.stringify(ids)}` : ""}${Array.isArray(value.tasks) ? ` (${value.tasks.length} tasks; next page: ${!!value.nextPageToken})` : ""}${typeof value.warning === "string" ? "; accepted, local save failed; do not repeat" : ""}${typeof value.notice === "string" ? `; ${value.notice}` : ""}; use --json for full result`;
 }
 export async function executeCommand(argv: string[], fetchImpl: Fetch = fetch): Promise<unknown> {
   const p = parseCommand(argv), v = p.values;

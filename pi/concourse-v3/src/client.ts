@@ -19,8 +19,9 @@ export const TASK_FINISHED_HINT = "That task is finished. Send a new message wit
 // refusal only for codes Concourse raises before it saves anything (§5.4 table).
 // -32603, unknown codes and any error naming a task/delivery (RELAY_WAIT_LIMIT,
 // RELAY_DELIVERY_*) can follow a committed write, so they stay uncertain.
-// -32001 is excluded: membership loss mid-request can raise it after a save.
-const PRE_COMMIT_CODES = new Set([-32700, -32600, -32601, -32602, -32002, -32003, -32004, -32005, -32009]);
+// -32001 (task not found) is a refusal too: Concourse raises it after a save only while a
+// blocking send waits for the task to settle, and this client always asks to return at once.
+const PRE_COMMIT_CODES = new Set([-32700, -32600, -32601, -32602, -32001, -32002, -32003, -32004, -32005, -32009]);
 // Concourse's own detail follows the spec's ErrorInfo under this fixed domain.
 const CONCOURSE_DOMAIN = "concourse.krishnan.ca";
 const errorInfo = (d: unknown): d is ObjectValue => object(d) && d["@type"] === "type.googleapis.com/google.rpc.ErrorInfo";
@@ -129,7 +130,7 @@ export class Client {
     return { tasks: b.tasks.map(task), blockedTasks: blocked as { taskId: string; code: string }[], ...(b.nextPageToken ? { nextPageToken: b.nextPageToken } : {}) };
   }
   async find(query?: string): Promise<unknown> { await this.identity(); return this.request("GET", `agents?${new URLSearchParams(query ? { query } : {})}`); }
-  // A2A v1.0 §3.1.1/§3.3.1: no automatic retry, preserve creator's messageId; Message stays Message.
+  // A2A v1.0 §3.1.1/§3.3.1: one attempt; any resend is the Outbox's, with the same messageId. Message stays Message.
   async send(recipient: string, messageId: string, parts: ObjectValue[], taskId?: string, contextId?: string): Promise<Json> {
     qualifiedRecipient(recipient); const outbound = wireParts(parts);
     const { Role } = await import("@a2a-js/sdk");

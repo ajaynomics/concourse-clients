@@ -103,7 +103,8 @@ test("registered send/reply unknown HTTP responses still throw, never fabricate 
     await assert.rejects(execute(f, "reply", { task_id: "00000000-0000-4000-8000-000000000001", state: "TASK_STATE_COMPLETED" }), (e: unknown) => e instanceof SafeError && e.uncertain && /REPLY_UNCONFIRMED/.test(e.code));
     assert.deepEqual(Object.values(f.journal.load().outgoing).map(o => o.phase), ["uncertain"]);
     assert.deepEqual(Object.values(f.journal.load().replies!).map(o => o.phase), ["uncertain"]);
-    assert.equal(f.server.calls.filter(c => c.method === "POST" || c.method === "PATCH").length, 2);
+    // The lost send is resent once with the same messageId; the reply is never repeated.
+    assert.equal(f.server.calls.filter(c => c.method === "POST" || c.method === "PATCH").length, 3);
   } finally { t.mock.restoreAll(); await f.cleanup(); }
 });
 

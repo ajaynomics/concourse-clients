@@ -7,6 +7,10 @@ import { taskOutput } from "./output.ts";
 // Absence proves nothing while the original request could still commit: past the 15 s
 // client deadline and the hosted proxy/edge ceilings (about 100 s), with margin.
 export const RECEIPT_SETTLE_MS = 2 * 60_000;
+// A recipient may never finish a task. Read a sent task every lap for an hour after our
+// last message on it, then wait a tenth of its age between reads (at most an hour), and
+// stop after a week. Without this, every unfinished task was read once a minute forever.
+export const POLL_FREELY_MS = 60 * 60_000, POLL_MAX_GAP_MS = 60 * 60_000, POLL_STOP_MS = 7 * 24 * 60 * 60_000;
 export class Outbox {
   constructor(private journal: Journal, private client: Pick<Client, "send" | "get" | "network">, private guard: () => void = () => {}, private now: () => number = Date.now) {}
   private observation(l: Ledger, taskId: string): number { return l.observations?.[taskId] ?? 0; }
@@ -32,7 +36,7 @@ export class Outbox {
     if (o.answerKey !== key) { o.offered = false; o.delivered = false; }
     o.answerKey = key;
   }
-  async send(recipient: string, parts: ObjectValue[], expectReply = true, taskId?: string, contextId?: string): Promise<{ result: Json; messageId: string; warning?: string }> {
+  async send(recipient: string, parts: ObjectValue[], expectReply = true, taskId?: string, contextId?: string): Promise<{ result: Json; messageId: string; warning?: string; notice?: string }> {
     this.guard(); qualifiedRecipient(recipient); wireParts(parts);
     const l = this.journal.load(), id = randomUUID();
     const intent: Outgoing = { messageId: id, recipient, parts: structuredClone(parts), contextId, expectReply: expectReply || (!!taskId && Object.values(l.outgoing).some(o => o.taskId === taskId && o.expectReply)), phase: "prepared", taskId, preparedAt: this.now() };
@@ -40,7 +44,7 @@ export class Outbox {
     if (taskId) intent.supersedesQuestions = [...new Set(Object.values(l.outgoing).filter(o => o.taskId === taskId && inputRequired(o.answer) && o.answerKey).map(o => o.answerKey!))];
     l.outgoing[id] = intent; this.journal.save(l);
     let result: Json;
-    try { result = await this.client.send(recipient, id, parts, taskId, contextId); }
+    try { result = await this.deliver(recipient, id, parts, taskId, contextId); }
     catch (e) {
       this.guard(); const latest = this.journal.load();
       // An HTTP 4xx or a complete JSON-RPC error answer (A2A v1.0 §9.5) is a definite refusal.
@@ -48,7 +52,19 @@ export class Outbox {
       const refused = e instanceof SafeError && !e.uncertain && (e.code === "A2A_REFUSED" || !!e.status && e.status < 500);
       latest.outgoing[id]!.phase = refused ? "refused" : "uncertain"; this.journal.save(latest);
       if (!refused) throw new SafeError(`SEND_UNCONFIRMED_OR_REFUSED messageId=${id}`, true);
-      throw await this.refusal(e as SafeError, id, taskId);
+      const refusal = await this.refusal(e as SafeError, id, taskId);
+      // A2A terminal tasks never restart, so the conversation goes on as a new task in the same
+      // context. Only the server's exact TASK_TERMINAL refusal does this, and only once: the new
+      // send has no task_id, so it cannot be refused this way again.
+      if (taskId && (e as SafeError).details.reason === "TASK_TERMINAL") {
+        const context = await this.contextOf(taskId);
+        if (context) {
+          const next = await this.send(recipient, parts, intent.expectReply, undefined, context);
+          const started = object(next.result) && typeof next.result.id === "string" ? ` ${next.result.id}` : "";
+          return { ...next, notice: `Task ${taskId} was already finished, so this message started a new task${started} in the same conversation.` };
+        }
+      }
+      throw refusal;
     }
     // Known acceptance remains success if bookkeeping fails, including generation replacement.
     try {
@@ -64,6 +80,21 @@ export class Outbox {
       this.journal.save(latest);
       return { result, messageId: id };
     } catch { return { result, messageId: id, warning: "Server accepted; local intent save failed. Retain returned task/message ID; do not resend." }; }
+  }
+  // The server dedupes on messageId, so resending once after a lost response or a server error
+  // cannot deliver twice. Refusals and every other unknown keep today's no-resend handling.
+  private async deliver(...args: Parameters<Client["send"]>): Promise<Json> {
+    try { return await this.client.send(...args); }
+    catch (e) {
+      if (!(e instanceof SafeError) || !(e.code === "TRANSPORT_FAILED" || !!e.status && e.status >= 500)) throw e;
+      this.guard(); return await this.client.send(...args);
+    }
+  }
+  // Nothing was accepted, so reading the finished task is safe.
+  private async contextOf(taskId: string): Promise<string | undefined> {
+    let t: Task;
+    try { t = await this.client.get(taskId); } catch { return; }
+    this.guard(); return t.contextId || undefined;
   }
   // Nothing was accepted, so a read of the target Task is safe; it only sharpens the advice.
   private async refusal(e: SafeError, messageId: string, taskId?: string): Promise<SafeError> {
@@ -117,10 +148,16 @@ export class Outbox {
     throw new SafeError("NOT_DELIVERED", false, undefined, { messageId }, "Concourse has no record of this message, so it was not delivered. It is safe to send it again as a new message.");
   }
   async sweep(max = 20): Promise<void> {
-    this.guard(); const l = this.journal.load();
-    const byTask = new Map<string, Outgoing>();
+    this.guard(); const l = this.journal.load(), now = this.now();
+    const byTask = new Map<string, Outgoing>(), sentAt = new Map<string, number>();
     for (const o of Object.values(l.outgoing)) if (o.phase === "accepted" && o.resultType !== "message" && o.taskId && !o.observedTerminal && !byTask.has(o.taskId)) byTask.set(o.taskId, o);
-    const tasks = [...byTask.keys()].sort();
+    for (const o of Object.values(l.outgoing)) if (o.phase === "accepted" && o.taskId && Number.isFinite(o.preparedAt)) sentAt.set(o.taskId, Math.max(sentAt.get(o.taskId) ?? 0, o.preparedAt!));
+    const due = (taskId: string) => {
+      // Intents older than preparedAt count from their first poll.
+      const poll = l.polls?.[taskId], age = now - (sentAt.get(taskId) ?? poll?.first ?? now);
+      return age < POLL_STOP_MS && (!poll || age < POLL_FREELY_MS || now - poll.last >= Math.min(age / 10, POLL_MAX_GAP_MS));
+    };
+    const tasks = [...byTask.keys()].filter(due).sort();
     const after = l.cursors.answers;
     const start = after ? tasks.findIndex(id => id > after) : 0;
     const page = start < 0 ? [] : tasks.slice(start, start + max);
@@ -149,6 +186,7 @@ export class Outbox {
           fresh.blockedAnswers[taskId] = { code: blocked };
         }
       }
+      (fresh.polls ??= {})[taskId] = { first: fresh.polls[taskId]?.first ?? now, last: now };
       fresh.cursors.answers = taskId; this.journal.save(fresh);
       // Surface the transport failure, but resume after this Task next time.
       // Stop after one timeout rather than spending the whole sweep's budget.

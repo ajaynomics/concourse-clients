@@ -59,6 +59,13 @@ state, for a task you received. Set expect_reply=true when you need the result t
 start a follow-up turn, including recipient-authored WORKING messages or artifacts.
 false suppresses unrequested replies, not genuine INPUT_REQUIRED questions.
 State-only updates and stale retained output do not start model turns.
+The client reads a sent, unfinished task every minute for an hour after your last
+message on it, then less often (at most hourly), and stops after a week. Use get to
+check an older task yourself.
+
+A send with task_id to a task the server reports finished (TASK_TERMINAL) is sent
+once more as a new task in the same context, and the result's notice names the new
+task. Other refusals are never retried this way.
 
 Reply states are TASK_STATE_WORKING, INPUT_REQUIRED, COMPLETED, FAILED and
 REJECTED. INPUT_REQUIRED needs a real question. Only the recipient supplies an
@@ -70,7 +77,9 @@ CANCEL_REFUSED, REPLY_REQUIRED and TASK_ALREADY_FINISHED are definite: the serve
 answered and accepted nothing. REPLY_REQUIRED says to use reply, not send, on a
 received task. HTTP_REFUSED_<status> names the status. FULL_TASK_ID_REQUIRED
 refuses a shortened Task ID before any request. Uncertain codes keep their message
-or reply ID; reconcile them, never resend. A receipt with no record proves
+or reply ID; reconcile them, never resend. The client itself resends a send once,
+with the same message ID, after a lost response or an HTTP 5xx; the server keeps
+only one copy. A receipt with no record proves
 non-delivery only two minutes after the original send; reconcile-send then reports
 NOT_DELIVERED, and a new message is safe.
 
