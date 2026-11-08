@@ -112,14 +112,14 @@ export function reconciled(value: unknown): string {
 export function pendingList(result: unknown): string {
   const agents = object(result) && Array.isArray(result.agents) ? result.agents.filter(object) : [];
   if (!agents.length) return "No agents are waiting for approval.";
-  return [...agents.map(a => `${String(a.id).padStart(5)}  ${oneLine(a.address, 40)}  ${oneLine(a.name ?? "", 30)}  requested ${oneLine(a.requested_at ?? "?", 25)} by ${oneLine(a.owner ?? "?", 30)}`),
+  return [...agents.map(a => `${String(a.id).padStart(5)}  ${oneLine(a.address ?? "(unnamed)", 40)}  ${oneLine(a.name ?? "", 30)}  requested ${oneLine(a.requested_at ?? "?", 25)} by ${oneLine(a.owner ?? "?", 30)}`),
     "Approve with: concourse approve ID. Decline with: concourse decline ID."].join("\n");
 }
 
 const VERB = { approve: "Approved", decline: "Declined", retire: "Retired" } as const;
 export function admission(action: keyof typeof VERB, result: unknown): string {
   const v = object(result) ? result : {};
-  return `${VERB[action]} ${oneLine(v.address, 80)} (id ${clean(v.id)}). Status: ${clean(v.status).replaceAll("_", " ")}.`;
+  return `${VERB[action]} ${oneLine(v.address ?? "(unnamed agent)", 80)} (id ${clean(v.id)}). Status: ${clean(v.status).replaceAll("_", " ")}.`;
 }
 
 export function failure(code: string, ids: Record<string, unknown>, uncertain: boolean, hint?: string): string {

@@ -3,6 +3,7 @@ import { withProfile } from "../../pi/concourse-v3/src/commands.ts";
 import { object } from "../../pi/concourse-v3/src/types.ts";
 import { UsageError } from "./args.ts";
 
+// An unnamed agent has a null address until it is named.
 // Concourse owner actions (server Agent::OwnerAuthority, /auth.md "Owner actions"):
 // an organization owner's own signed-in agent approves, declines and retires agents.
 export type OwnerAction = "pending" | "approve" | "decline" | "retire";
@@ -51,8 +52,8 @@ export async function ownerAction(profile: string, action: OwnerAction, id: stri
     let body: unknown;
     try { body = await response.json(); } catch { /* checked below */ }
     if (action === "pending") {
-      if (!object(body) || !Array.isArray(body.agents) || !body.agents.every(a => object(a) && Number.isSafeInteger(a.id) && typeof a.address === "string")) throw new SafeError("INVALID_OWNER_RESPONSE");
-    } else if (!object(body) || !Number.isSafeInteger(body.id) || typeof body.address !== "string" || !STATUSES.includes(body.status as string)) {
+      if (!object(body) || !Array.isArray(body.agents) || !body.agents.every(a => object(a) && Number.isSafeInteger(a.id) && (typeof a.address === "string" || a.address === null))) throw new SafeError("INVALID_OWNER_RESPONSE");
+    } else if (!object(body) || !Number.isSafeInteger(body.id) || !(typeof body.address === "string" || body.address === null) || !STATUSES.includes(body.status as string)) {
       // The server answered 200, so the action most likely happened; only its answer is unreadable.
       throw new SafeError("INVALID_OWNER_RESPONSE", true, response.status, {}, UNCERTAIN);
     }
