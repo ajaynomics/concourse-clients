@@ -21,7 +21,7 @@ test("identity read failures stop refresh before tail, answer polling or cached-
     const guard = outboundGuard();
     const ctx = { sessionManager: { getSessionId: () => "synthetic-session" }, ui: { setStatus: () => {}, notify: () => {} } } as unknown as ExtensionContext;
     const pi = { sendMessage: () => { handoffs++; } } as unknown as ExtensionAPI;
-    const runtime = new Runtime({ pi, fetchImpl, current: () => true, labelled: () => false }, ctx, p.files, config, "test");
+    const runtime = new Runtime({ handOff: m => pi.sendMessage(m), fetchImpl, current: () => true, labelled: () => false }, ctx, p.files, config, "test");
     try {
       const l = runtime.journal.load(); l.cursors.inbox = "saved-tail";
       l.outgoing.cached = { messageId: "cached", recipient: "other/sender", taskId: "00000000-0000-4000-8000-000000000001", phase: "accepted", expectReply: true, observedTerminal: true, answer: JSON.parse(JSON.stringify(answer("cached-result"))), answerKey: "cached-key" };

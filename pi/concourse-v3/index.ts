@@ -9,6 +9,7 @@ import type { PrivateFiles } from "./src/storage.ts";
 import { toolResult } from "./src/results.ts";
 import { PEER_GUIDELINE } from "./src/format.ts";
 import { DISPLAY_FILE, mailRenderer, type Display } from "./src/render.ts";
+import { Handoffs } from "./src/handoff.ts";
 import { ANSWER_TYPE, explain, openProfile, Runtime, type Host } from "./src/runtime.ts";
 
 export function install(pi: ExtensionAPI, fetchImpl: Fetch = fetch): void {
@@ -18,6 +19,8 @@ export function install(pi: ExtensionAPI, fetchImpl: Fetch = fetch): void {
   let display: Display = { collapse: false };
   const renderer = mailRenderer(() => display);
   pi.registerMessageRenderer(DELIVERY_TYPE, renderer); pi.registerMessageRenderer(ANSWER_TYPE, renderer);
+  // Mail and answers queued in Pi stay tracked until consumed, so Escape cannot silently drop them.
+  const handoffs = new Handoffs(pi, [DELIVERY_TYPE, ANSWER_TYPE]);
   const names = () => runtimes.map(r => r.id).join(", ");
   // Profiles share only the Pi session; each keeps its own lock, ledger and connection.
   function attach(fresh: ExtensionContext): void {
@@ -41,7 +44,7 @@ export function install(pi: ExtensionAPI, fetchImpl: Fetch = fetch): void {
     return r;
   }
   function shutdown(): Promise<void> {
-    generation++; const old = runtimes; runtimes = []; if (!old.length) return closing;
+    generation++; handoffs.reset(); const old = runtimes; runtimes = []; if (!old.length) return closing;
     closing = Promise.all(old.map(r => r.stop())).then(() => {}); return closing;
   }
   pi.on("session_start", async (_event, fresh) => {
@@ -51,7 +54,7 @@ export function install(pi: ExtensionAPI, fetchImpl: Fetch = fetch): void {
     if (active.has("codemode")) for (const definition of tools) if (!active.has(definition.name)) pi.registerTool({ ...definition, exposure: "codemode" });
     const old = shutdown(), ticket = generation; await old; if (ticket !== generation) return;
     const flag = pi.getFlag("concourse-v3-profile"); if (typeof flag !== "string" || !flag) return;
-    const host: Host = { pi, fetchImpl, current: r => runtimes.includes(r) && generation === ticket, labelled: () => runtimes.length > 1 };
+    const host: Host = { fetchImpl, current: r => runtimes.includes(r) && generation === ticket, labelled: () => runtimes.length > 1, handOff: m => handoffs.send(m) };
     const loaded: Runtime[] = [];
     // Open every profile before any starts, so the first mail already knows whether to carry a label.
     for (const path of flag.split(",").map(p => p.trim())) {
@@ -69,6 +72,10 @@ export function install(pi: ExtensionAPI, fetchImpl: Fetch = fetch): void {
     for (const r of loaded) try { r.start(); } catch (e) { runtimes = runtimes.filter(x => x !== r); await r.stop(); fresh.ui.notify(`${r.id}: ${explain(e)}`, "warning"); }
   });
   pi.on("session_shutdown", shutdown);
+  // Observation only: no automatic steering, abort, replay or new turn. Held mail is put back after settling.
+  pi.on("message_end", event => { const message = handoffs.consumed(event.message); return message && { message }; });
+  pi.on("agent_end", () => handoffs.ended());
+  pi.on("agent_settled", (event, ctx) => handoffs.settled(event.aborted, ctx));
   // No input/idle/editor/context hooks: the human and peer messages use Pi's existing scheduling.
   pi.registerCommand("concourse-v3", { description: "help | status | refresh | answers | answer <messageId> | reconcile <messageId> [profile host/owner/agent] | collapse on|off; normal Pi mailbox",
     getArgumentCompletions: prefix => ["help", "status", "refresh", "answers", "answer ", "reconcile ", "collapse on", "collapse off"].filter(c => c.startsWith(prefix)).map(value => ({ value, label: value.trim() })),

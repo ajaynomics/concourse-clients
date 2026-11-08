@@ -26,7 +26,7 @@ function fixture(c: Config = config) {
   };
   const ctx = { sessionManager: { getSessionId: () => "synthetic-session" }, ui: { setStatus: () => {}, notify: (text: string, level: string) => { assert.equal(level, "warning"); warnings.push(text); } } } as unknown as ExtensionContext;
   const pi = { sendMessage: () => events.push("handoff") } as unknown as ExtensionAPI;
-  const runtime = new Runtime({ pi, fetchImpl, current: () => true, labelled: () => true }, ctx, p.files, c, "test");
+  const runtime = new Runtime({ handOff: m => pi.sendMessage(m), fetchImpl, current: () => true, labelled: () => true }, ctx, p.files, c, "test");
   return { p, runtime, warnings, events, health: () => p.files.read<HealthSnapshot>("health.json")!,
     identityFails: (v: boolean) => { identityFails = v; }, tailFails: (v: boolean) => { tailFails = v; }, headFails: (v: boolean) => { headFails = v; },
     close: async () => { await runtime.stop(); p.cleanup(); } };

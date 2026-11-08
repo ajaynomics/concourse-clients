@@ -31,7 +31,8 @@ export function openProfile(path: string): { files: PrivateFiles; config: Config
 }
 
 // What every profile shares: the one Pi session and the extension's generation.
-export interface Host { pi: ExtensionAPI; fetchImpl: Fetch; current(r: Runtime): boolean; labelled(): boolean }
+// handOff queues a follow-up through Pi and keeps it until Pi consumes it (src/handoff.ts).
+export interface Host { fetchImpl: Fetch; current(r: Runtime): boolean; labelled(): boolean; handOff(message: CustomMessage): void }
 
 // One profile: its own consumer lock, tokens, client, ledger, mailbox, outbox, doorbell and timers.
 export class Runtime {
@@ -94,7 +95,7 @@ export class Runtime {
     this.life.check();
     const labelled = this.host.labelled() && typeof message.content === "string"
       ? { ...message, content: `[${this.label}] ${message.content}`, details: { ...(message.details as object), profile: this.id } } : message;
-    this.host.pi.sendMessage(labelled, { triggerTurn: true, deliverAs: "followUp" });
+    this.host.handOff(labelled);
   }
   offerAnswer(id: string): void {
     this.life.check(); const value = this.outbox.take(id); if (value === undefined) return;

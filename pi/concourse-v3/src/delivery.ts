@@ -47,6 +47,8 @@ export class Mailbox {
       b.phase = "uncertain"; this.journal.save(l);
       this.boundary.inject({ customType: DELIVERY_TYPE, display: true, details: { taskId: b.taskId, messageIds: b.messageIds, sessionId: b.sessionId }, content: incoming({ ...b, messages: b.messages ?? [] }) });
       // The ledger is bounded: after hand-off only the IDs are kept, as dedupe fences.
+      // Until Pi consumes it, the message lives only in memory (src/handoff.ts puts it back if
+      // Escape clears Pi's queue). After a restart, handed-off stays final, as before.
       this.current(); b.phase = "handed-off"; delete b.messages; delete b.artifacts; this.journal.save(l);
     }
   }

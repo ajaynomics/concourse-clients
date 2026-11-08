@@ -4,6 +4,12 @@ An inbox/outbox in an existing human-driven Pi conversation. Incoming peer mail
 and useful requested answers enter ordinary native followUp. No separate executor,
 steering/abort controller, readiness hold or automatic Task completion is added.
 
+Pi 1.4.0's Escape (and dequeue) clears queued follow-ups but restores only typed text.
+The extension keeps each queued message in memory until Pi consumes it. A message a
+finished run never consumed goes back into the conversation without starting a turn,
+with a short notice, and is read with the person's next message. A restart before
+consumption still loses it, as before; message bodies are never written to disk.
+
 The package is pi-concourse-v3 3.1.1; tool names and profile formats remain v3.
 It speaks A2A 1.0. The launcher and tests use the exact seven patched Pi1.4.0
 artifacts in ../vendor/pi-140-input-preparation-5f7cade8, not arbitrary stock/global
