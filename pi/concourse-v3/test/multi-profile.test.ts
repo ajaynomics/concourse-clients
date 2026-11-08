@@ -51,7 +51,7 @@ function profileDir(root: string, name: string, config: Config) {
 function session(flag: string, servers: Server[]) {
   const tools = new Map<string, any>(), handlers = new Map<string, any>(); let command: any;
   const sent: { message: any; options: any }[] = [], statuses = new Map<string, string>(), notes: string[] = [];
-  const ctx = { sessionManager: { getSessionId: () => "session1" }, ui: { setStatus: (k: string, v: string) => statuses.set(k, v), notify: (m: string) => notes.push(m) } };
+  const ctx = { isIdle: () => true, sessionManager: { getSessionId: () => "session1" }, ui: { setStatus: (k: string, v: string) => statuses.set(k, v), notify: (m: string) => notes.push(m) } };
   const pi = { registerFlag() {}, getFlag: () => flag, getActiveTools: () => [], registerMessageRenderer() {}, on: (e: string, h: unknown) => handlers.set(e, h), registerCommand: (_n: string, c: unknown) => { command = c; },
     registerTool: (t: { name: string }) => tools.set(t.name, t), sendMessage: (message: unknown, options: unknown) => sent.push({ message, options }) } as unknown as ExtensionAPI;
   const route: Fetch = (input, init) => servers.find(s => new URL(input instanceof Request ? input.url : String(input)).origin === s.config.origin)!.fetch(input, init);
