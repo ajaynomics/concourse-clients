@@ -13,13 +13,15 @@ export const DUPLICATE_NOTICE = "(Concourse: this message was already added to t
 // A restart still loses an unconsumed hand-off, as before. Content is never written to
 // disk, and the ledger's handed-off phase stays final.
 export class Handoffs {
-  private pending: { key: string; message: CustomMessage; ends: number }[] = [];
+  private pending: { key: string; message: CustomMessage; queued: boolean; starts: number }[] = [];
   private kept = new Set<string>();
-  private ends = 0;
+  private starts = 0;
   constructor(private pi: ExtensionAPI, private types: readonly string[]) {}
 
-  send(message: CustomMessage): void {
-    const entry = { key: key(message), message, ends: this.ends };
+  // busy: Pi is mid-run (isIdle false), so this mail waits in Pi's follow-up queue. That holds
+  // after agent_end too, through retry backoff, compaction and settling hooks.
+  send(message: CustomMessage, busy: boolean): void {
+    const entry = { key: key(message), message, queued: busy, starts: this.starts };
     this.pending.push(entry);
     try { this.pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" }); }
     catch (e) { this.pending.splice(this.pending.indexOf(entry), 1); throw e; }
@@ -35,15 +37,17 @@ export class Handoffs {
     return { ...message, content: DUPLICATE_NOTICE, details: { ...(message.details as object), duplicate: true } };
   }
 
-  // Pi drains queued follow-ups inside the loop and emits their message_end before agent_end.
-  ended(): void { this.ends++; }
+  // Mail sent while idle starts a run of its own; one deferred by prompt preparation can land
+  // in a later run's queue instead, which agent_start reveals.
+  started(): void { this.starts++; }
 
-  // Only hand-offs made before the run's last agent_end count. Mail sent while Pi settles
-  // starts its own run afterwards, so it is not lost and must not be put back here.
+  // A run settled. Every unconsumed hand-off that waited in its queue is put back. Mail sent
+  // while Pi emits agent_settled is idle-sent and deferred to its own run, so it stays out.
   settled(aborted: boolean, ctx: ExtensionContext): void {
-    const lost = this.pending.filter(p => p.ends < this.ends);
+    const isLost = (p: { queued: boolean; starts: number }) => p.queued || p.starts < this.starts;
+    const lost = this.pending.filter(isLost);
     if (!lost.length) return;
-    this.pending = this.pending.filter(p => p.ends >= this.ends);
+    this.pending = this.pending.filter(p => !isLost(p));
     for (const p of lost) {
       this.kept.add(p.key);
       // Not streaming during agent_settled, so Pi appends this entry now and starts no turn.
@@ -55,7 +59,7 @@ export class Handoffs {
   }
 
   // A replaced or closed session's queue is gone with it.
-  reset(): void { this.pending = []; this.kept.clear(); this.ends = 0; }
+  reset(): void { this.pending = []; this.kept.clear(); this.starts = 0; }
 }
 
 function key(m: Seen | CustomMessage): string {

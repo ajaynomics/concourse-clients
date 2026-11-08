@@ -123,25 +123,33 @@ test("an abort that keeps Pi's queue does not duplicate the mail it put back", {
   assert.deepEqual(f.errors, []);
 });
 
-test("hand-off ordering: only mail handed off before the run's last agent_end is put back", () => {
+test("hand-off ordering: mail that waited in Pi's queue is put back; idle-sent mail runs on its own", () => {
   const sent: { message: { customType: string; content: string; details: object }; options: object }[] = [], notes: string[] = [];
   const pi = { sendMessage: (message: never, options: object) => { sent.push({ message, options }); } } as unknown as ConstructorParameters<typeof Handoffs>[0];
   const ctx = { ui: { notify: (text: string) => { notes.push(text); } } } as unknown as Parameters<Handoffs["settled"]>[1];
   const h = new Handoffs(pi, ["concourse-v3.delivery"]);
   const message = (id: string) => ({ customType: "concourse-v3.delivery", display: true, content: id, details: { id } });
-  h.send(message("consumed")); h.send(message("dropped"));
-  assert.equal(h.consumed({ role: "custom", ...message("consumed") }), undefined, "Pi drained it before agent_end");
-  h.ended();
-  // Sent while Pi settles: Pi starts a fresh run for it, so it is not lost.
-  h.send(message("late"));
+  const back = () => sent.filter(s => (s.message.details as { held?: boolean }).held).map(s => s.message.content);
+  h.started();
+  h.send(message("consumed"), true); h.send(message("dropped"), true);
+  assert.equal(h.consumed({ role: "custom", ...message("consumed") }), undefined, "Pi drained it in the run");
+  // After agent_end Pi can still be mid-run (retry backoff, compaction, settle hooks): still queued.
+  h.send(message("after-end"), true);
+  // Sent while Pi emits agent_settled: idle, so Pi defers it to a run of its own.
+  h.send(message("late"), false);
   h.settled(true, ctx);
-  assert.deepEqual(sent.slice(3).map(s => [s.message.content, s.options]), [["dropped", { triggerTurn: false }]]);
-  assert.deepEqual((sent[3].message.details as { held?: boolean }).held, true);
+  assert.deepEqual(back(), ["dropped", "after-end"]);
+  assert.ok(sent.filter(s => (s.message.details as { held?: boolean }).held).every(s => JSON.stringify(s.options) === JSON.stringify({ triggerTurn: false })));
   assert.equal(notes.length, 1);
-  h.settled(true, ctx); assert.equal(sent.length, 4, "a second settle puts nothing back again");
-  assert.equal(h.consumed({ role: "custom", ...message("late") }), undefined, "the late hand-off is consumed normally");
-  assert.equal(h.consumed({ role: "custom", ...sent[3].message }), undefined, "the held copy never matches its original");
+  h.settled(true, ctx); assert.equal(back().length, 2, "a second settle puts nothing back again");
+  h.started();
+  assert.equal(h.consumed({ role: "custom", ...message("late") }), undefined, "the late hand-off is consumed by its own run");
+  const held = sent.find(s => s.message.content === "dropped" && (s.message.details as { held?: boolean }).held)!;
+  assert.equal(h.consumed({ role: "custom", ...held.message }), undefined, "the held copy never matches its original");
   assert.equal(h.consumed({ role: "custom", ...message("dropped") })?.content, DUPLICATE_NOTICE, "a surviving original is replaced once");
   assert.equal(h.consumed({ role: "custom", ...message("dropped") }), undefined);
-  h.ended(); h.settled(false, ctx); assert.equal(sent.length, 4);
+  h.settled(false, ctx); assert.equal(back().length, 2);
+  // Idle-sent mail deferred by prompt preparation that lands in that prompt's run queue.
+  h.send(message("deferred"), false); h.started(); h.settled(true, ctx);
+  assert.deepEqual(back(), ["dropped", "after-end", "deferred"]);
 });

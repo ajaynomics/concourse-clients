@@ -54,7 +54,7 @@ export function install(pi: ExtensionAPI, fetchImpl: Fetch = fetch): void {
     if (active.has("codemode")) for (const definition of tools) if (!active.has(definition.name)) pi.registerTool({ ...definition, exposure: "codemode" });
     const old = shutdown(), ticket = generation; await old; if (ticket !== generation) return;
     const flag = pi.getFlag("concourse-v3-profile"); if (typeof flag !== "string" || !flag) return;
-    const host: Host = { fetchImpl, current: r => runtimes.includes(r) && generation === ticket, labelled: () => runtimes.length > 1, handOff: m => handoffs.send(m) };
+    const host: Host = { fetchImpl, current: r => runtimes.includes(r) && generation === ticket, labelled: () => runtimes.length > 1, handOff: m => handoffs.send(m, !fresh.isIdle()) };
     const loaded: Runtime[] = [];
     // Open every profile before any starts, so the first mail already knows whether to carry a label.
     for (const path of flag.split(",").map(p => p.trim())) {
@@ -74,7 +74,7 @@ export function install(pi: ExtensionAPI, fetchImpl: Fetch = fetch): void {
   pi.on("session_shutdown", shutdown);
   // Observation only: no automatic steering, abort, replay or new turn. Held mail is put back after settling.
   pi.on("message_end", event => { const message = handoffs.consumed(event.message); return message && { message }; });
-  pi.on("agent_end", () => handoffs.ended());
+  pi.on("agent_start", () => handoffs.started());
   pi.on("agent_settled", (event, ctx) => handoffs.settled(event.aborted, ctx));
   // No input/idle/editor/context hooks: the human and peer messages use Pi's existing scheduling.
   pi.registerCommand("concourse-v3", { description: "help | status | refresh | answers | answer <messageId> | reconcile <messageId> [profile host/owner/agent] | collapse on|off; normal Pi mailbox",
