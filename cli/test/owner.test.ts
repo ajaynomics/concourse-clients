@@ -34,6 +34,16 @@ test("owner actions call the documented REST endpoints after checking identity",
   assert.equal((await f.run(["pending"])).text, "No agents are waiting for approval.");
 });
 
+test("an unnamed agent's null address is a valid answer", async t => {
+  const f = setup(t);
+  f.server.routes.set("GET /api/pending_agents", () => json({ agents: [{ id: 13, address: null, name: "New app", owner: "someone", client_id: "c2", requested_at: "2026-11-08T12:00:00Z" }] }));
+  f.server.routes.set("POST /api/agents/13/approval", () => json({ id: 13, address: null, status: "admitted" }));
+  assert.match((await f.run(["pending"])).text, /^ {3}13 {2}\(unnamed\)/);
+  const approved = await f.run(["approve", "13"]);
+  assert.equal(approved.code, 0);
+  assert.equal(approved.text, "Approved (unnamed agent) (id 13). Status: admitted.");
+});
+
 test("documented refusals map to plain, stable errors", async t => {
   const f = setup(t);
   const cases = [

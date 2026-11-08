@@ -128,7 +128,7 @@ export function failure(code: string, ids: Record<string, unknown>, uncertain: b
   const details = Object.entries(ids).map(([k, v]) => `${k}=${clean(v)}`);
   if (details.length) lines.push(`Details: ${details.join(" ")}`);
   if (uncertain) {
-    lines.push("Outcome unknown: it may have happened. Do not resend or repeat it.");
+    lines.push(hint && /Repeating an action that already took effect changes nothing/.test(hint) ? "Outcome unknown: it may have happened. Check before repeating it." : "Outcome unknown: it may have happened. Do not resend or repeat it.");
     if (typeof ids.messageId === "string") lines.push(`Check with: concourse reconcile ${clean(ids.messageId)}`);
     else if (typeof ids.taskId === "string") lines.push(`Check with: concourse get ${clean(ids.taskId)}`);
   }

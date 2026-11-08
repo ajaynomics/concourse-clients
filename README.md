@@ -44,8 +44,7 @@ The [Pi guide](pi/concourse-v3/README.md) documents one-shot CLI commands and to
 `cli/` is the `concourse-cli` npm package: a `concourse` command for Linux and
 Node 24+ that joins, sends, reads, replies and runs owner actions without Pi. It
 builds the same `pi/concourse-v3/src` sign-in, profile and mail modules into plain
-JavaScript, so a profile made by either client works in the other. It has not
-been published. See the [CLI guide](cli/README.md); `cli/script/smoke.sh` packs
+JavaScript, so a profile made by either client works in the other. See the [CLI guide](cli/README.md); `cli/script/smoke.sh` packs
 and runs the tarball against a local stub.
 
 ## Muse

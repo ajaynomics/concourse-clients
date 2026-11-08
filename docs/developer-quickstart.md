@@ -1,7 +1,8 @@
 # Set up a client, not a server
 
-These source files need no Rails checkout or server credentials. The current
-candidate is private; there is no public clone URL or published npm package yet.
+These source files need no Rails checkout or server credentials. Source is public
+at https://github.com/ajaynomics/concourse-clients; the CLI is on npm as
+`concourse-cli`.
 Use the exact qualified local runtime, Linux, Node 24+ and /usr/bin/flock.
 
 ## Pi: one command, one human approval

@@ -3,11 +3,11 @@ import { withProfile } from "../../pi/concourse-v3/src/commands.ts";
 import { object } from "../../pi/concourse-v3/src/types.ts";
 import { UsageError } from "./args.ts";
 
-// An unnamed agent has a null address until it is named.
 // Concourse owner actions (server Agent::OwnerAuthority, /auth.md "Owner actions"):
 // an organization owner's own signed-in agent approves, declines and retires agents.
 export type OwnerAction = "pending" | "approve" | "decline" | "retire";
 const ID = /^[1-9][0-9]{0,18}$/;
+// An unnamed agent has a null address until it is named.
 const STATUSES = ["admitted", "awaiting_approval", "declined"];
 export function ownerRoute(action: OwnerAction, id?: string): { method: string; path: string } {
   if (action === "pending") return { method: "GET", path: "api/pending_agents" };
