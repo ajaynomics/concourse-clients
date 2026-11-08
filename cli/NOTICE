@@ -1,0 +1,22 @@
+Concourse clients
+
+Concourse-authored client source is licensed under the MIT licence in LICENSE.
+Third-party source and artifacts retain their own licences and notices.
+
+The seven qualified Pi 1.4.0 archives are MIT-licensed Pi derivatives. Their
+upstream copyright, full bundled dependency notices, source patch and integrity
+manifest are retained under pi/vendor/pi-140-input-preparation-5f7cade8/.
+The A2A JavaScript SDK installed through npm is Apache-2.0 licensed; it is not
+embedded in the Concourse-authored source.
+
+proxy-agent-negotiate@1.1.0 explicitly declares MIT in its published package
+and exact release source. Its npm archive omits a licence file. The bundled
+full MIT notice comes from the same author's proxy-agent sibling at that
+release commit; its 2013 copyright line is not independently established
+as negotiate-specific. We preserve that notice and this limitation rather
+than invent a package-specific notice. Redistribution relies on the package's
+explicit MIT declaration, not an assertion that the sibling file covers it.
+See docs/licensing.md for exact sources, hashes and scope.
+
+No licence in this repository grants rights to the private Concourse server,
+service credentials, tenant data or private correspondence.

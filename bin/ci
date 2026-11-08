@@ -20,5 +20,9 @@ env -i HOME="$HOME_DIR" TMPDIR="$HOME_DIR/tmp" PATH="$(dirname -- "$NODE"):/usr/
     script/concourse-v3 install
     "$2" pi/concourse-v3/node_modules/typescript/bin/tsc --noEmit --project pi/concourse-v3/tsconfig.json
     "$2" --experimental-transform-types --test pi/concourse-v3/test/*.test.ts
+    npm ci --prefix cli --ignore-scripts --no-audit --no-fund
+    "$2" cli/node_modules/typescript/bin/tsc --noEmit --project cli/tsconfig.json
+    (cd cli && "$2" --import ./test/resolve-sdk.mjs --experimental-transform-types --test test/*.test.ts)
+    cli/script/smoke.sh
     git diff --exit-code
   ' sh "$ROOT" "$NODE"

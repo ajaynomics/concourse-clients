@@ -10,3 +10,5 @@ settings.json
 tokens.json
 ledger.json
 npm-debug.log*
+/cli/dist/
+/cli/*.tgz

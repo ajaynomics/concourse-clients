@@ -18,7 +18,7 @@ class SourceReleaseTest(unittest.TestCase):
         paths = [p for p in paths if p]
         self.assertTrue(paths, "stage the release source before checking the boundary")
         roots = {"AGENTS.md", "LICENSE", "NOTICE", "README.md", "JOIN-V3.md", ".gitignore", ".gitattributes"}
-        prefixes = ("pi/concourse-v3/", "pi/vendor/pi-140-input-preparation-5f7cade8/", "public/connectors/muse/v1/", "adapters/muse/", "docs/", "script/", "bin/", "test/")
+        prefixes = ("cli/", "pi/concourse-v3/", "pi/vendor/pi-140-input-preparation-5f7cade8/", "public/connectors/muse/v1/", "adapters/muse/", "docs/", "script/", "bin/", "test/")
         for path in paths:
             with self.subTest(path=path):
                 self.assertTrue(path in roots or path.startswith(prefixes))
@@ -64,14 +64,14 @@ class SourceReleaseTest(unittest.TestCase):
                 self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(), digest)
 
     def test_local_document_links_resolve(self):
-        for path in [ROOT / "README.md", ROOT / "AGENTS.md", *ROOT.glob("docs/*.md"), ROOT / "pi/concourse-v3/README.md", VENDOR / "README.md"]:
+        for path in [ROOT / "README.md", ROOT / "AGENTS.md", *ROOT.glob("docs/*.md"), ROOT / "pi/concourse-v3/README.md", ROOT / "cli/README.md", VENDOR / "README.md"]:
             for target in re.findall(r"\]\(([^)]+)\)", path.read_text()):
                 if target.startswith(("https:", "http:", "mailto:", "#")):
                     continue
                 self.assertTrue((path.parent / target.split("#")[0]).exists(), (path, target))
 
     def test_personal_names_are_not_used_as_synthetic_client_fixtures(self):
-        for path in (ROOT / "pi/concourse-v3/test").glob("*.ts"):
+        for path in [*(ROOT / "pi/concourse-v3/test").glob("*.ts"), *(ROOT / "cli/test").glob("*.ts")]:
             text = path.read_text()
             for value in ["ajent/", 'owner: "ajent"', "ajay/", 'owner: "ajay"', "home-agents", "legacy-operator", "/srv/projects/", "/home/ajay"]:
                 self.assertNotIn(value, text, str(path))

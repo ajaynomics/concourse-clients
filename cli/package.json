@@ -1,0 +1,47 @@
+{
+  "name": "concourse-cli",
+  "version": "0.1.0",
+  "description": "Command-line client for Concourse, an authenticated A2A v1.0 mailbox for AI agents",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "concourse": "dist/cli/src/bin.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "os": [
+    "linux"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ajaynomics/concourse-clients.git",
+    "directory": "cli"
+  },
+  "keywords": [
+    "a2a",
+    "agent",
+    "concourse",
+    "cli"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import ./test/resolve-sdk.mjs --experimental-transform-types --test test/*.test.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "typescript": "5.8.3"
+  }
+}

@@ -93,17 +93,27 @@ export function commandSummary(command: string, result: unknown): string {
   if (object(target.status) && typeof target.status.state === "string") ids.state = target.status.state;
   return `${command}: success${Object.keys(ids).length ? ` ${JSON.stringify(ids)}` : ""}${Array.isArray(value.tasks) ? ` (${value.tasks.length} tasks; next page: ${!!value.nextPageToken})` : ""}${typeof value.warning === "string" ? "; accepted, local save failed; do not repeat" : ""}${typeof value.notice === "string" ? `; ${value.notice}` : ""}; use --json for full result`;
 }
-export async function executeCommand(argv: string[], fetchImpl: Fetch = fetch): Promise<unknown> {
-  const p = parseCommand(argv), v = p.values;
-  const body = p.command === "send" || p.command === "reply" ? payload(v.input, p.command) : undefined;
-  const files = new PrivateFiles(p.profile); let release: (() => void) | undefined;
+export interface Session { config: Config; files: PrivateFiles; client: Client; tokens: TokenClient; journal: FileJournal; guard: () => void }
+// One action holds the profile lock from its first token use to its last journal write.
+export async function withProfile<T>(profile: string, fetchImpl: Fetch, use: (session: Session) => Promise<T>): Promise<T> {
+  const files = new PrivateFiles(profile); let release: (() => void) | undefined;
   try {
     try { release = files.acquire(); } catch { throw new SafeError("PROFILE_BUSY_OR_LOCK_UNAVAILABLE"); }
     const config = validateConfig(files.read<Config>("config.json")!);
     const guard = () => { if (!files.ownsConsumer()) throw new SafeError("PROFILE_LOCK_LOST"); };
     const tokens = new TokenClient(config, files, fetchImpl, Date.now, guard);
     const client = new Client(config, () => tokens.token(), fetchImpl, () => files.ownsConsumer());
-    const journal = new FileJournal(files);
+    return await use({ config, files, client, tokens, journal: new FileJournal(files), guard });
+  } finally { release?.(); files.close(); }
+}
+export async function executeCommand(argv: string[], fetchImpl: Fetch = fetch): Promise<unknown> {
+  const p = parseCommand(argv), v = p.values;
+  const body = p.command === "send" || p.command === "reply" ? payload(v.input, p.command) : undefined;
+  return runAction(p.command, p.profile, v, body, fetchImpl);
+}
+// Callers validate values and body first, as parseCommand and validatePayload do.
+export function runAction(command: Action, profile: string, v: Record<string, string>, body: ObjectValue | undefined, fetchImpl: Fetch = fetch): Promise<unknown> {
+  return withProfile(profile, fetchImpl, async ({ client, journal, guard }) => {
     const ids: Record<string, string> = { ...(v.recipient ? { recipient: v.recipient } : {}), ...(v["task-id"] || body?.taskId ? { taskId: (v["task-id"] || body!.taskId) as string } : {}) };
     let attempted = false;
     const outbox = new Outbox(journal, {
@@ -111,7 +121,7 @@ export async function executeCommand(argv: string[], fetchImpl: Fetch = fetch): 
       get: id => client.get(id), network: data => client.network(data),
     }, guard);
     try {
-    switch (p.command) {
+    switch (command) {
       case "identity": return await client.identity();
       case "find": return await client.find(v.query);
       case "inbox": return await client.inbox(v["page-token"]);
@@ -129,10 +139,10 @@ export async function executeCommand(argv: string[], fetchImpl: Fetch = fetch): 
       }
     }
     } catch (e) {
-      if (!["send", "reply", "cancel"].includes(p.command)) throw e;
+      if (!["send", "reply", "cancel"].includes(command)) throw e;
       // These codes are only raised for definite refusals: the server answered and accepted nothing.
       const refused = e instanceof SafeError && !e.uncertain && (!!e.status && e.status < 500 || ["SEND_REFUSED", "REPLY_REFUSED", "CANCEL_REFUSED", "TASK_ALREADY_FINISHED", "REPLY_REQUIRED"].includes(e.code));
       throw e instanceof SafeError ? new CommandError(e.code, attempted && !refused, ids, e.details, e.hint) : new CommandError("LOCAL_WRITE_BOOKKEEPING_FAILED", attempted, ids);
     }
-  } finally { release?.(); files.close(); }
+  });
 }

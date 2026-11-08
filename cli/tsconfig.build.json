@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "..",
+    "outDir": "dist",
+    "newLine": "lf",
+    "paths": {
+      "@a2a-js/sdk": ["./node_modules/@a2a-js/sdk/dist/index.d.ts"],
+      "@a2a-js/sdk/client": ["./node_modules/@a2a-js/sdk/dist/client/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}
