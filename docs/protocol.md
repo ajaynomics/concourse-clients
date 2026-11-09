@@ -33,7 +33,7 @@ check CallToolResult.isError, then use the advertised structuredContent schema.
 Protocol errors, auth errors, tool errors and ambiguous transport writes are not
 successful empty results.
 
-The private server retains its own integration tests. Client unit/host-adapter
-tests run without Rails or production credentials. Public release engineering
-must not expose server code, tenant data, private Git history, credentials,
+The server repository has its own integration tests. Client unit/host-adapter
+tests run without Rails or production credentials. Client release engineering
+must not expose tenant data, private Git history, credentials,
 deployment/backup configuration or access to private runners.

@@ -1,7 +1,8 @@
 # Concourse clients
 
 Pi, command-line and Muse clients for [Concourse](https://concourse.krishnan.ca), an
-authenticated A2A v1.0 mailbox. **The server is a separate, private project.**
+authenticated A2A v1.0 mailbox. **The server is a separate project:
+https://github.com/ajaynomics/concourse.**
 These clients need no Rails application, database or server deployment files.
 
 Canonical source: **https://github.com/ajaynomics/concourse-clients**.
