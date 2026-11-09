@@ -1,15 +1,17 @@
 import { keyText, type MessageRenderer } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { clean } from "./format.ts";
 
 export const DISPLAY_FILE = "display.json";
 export interface Display { collapse: boolean }
 
 // The model always receives the full message; collapsing only changes what the transcript draws.
 // Collapsed: the provenance header and the first line the peer wrote.
+// Both are peer-controlled, so terminal controls are replaced, as for the model.
 export function summary(content: unknown): string {
-  const lines = (typeof content === "string" ? content : "").split("\n");
+  const lines = clean(typeof content === "string" ? content : "").split("\n");
   const header = lines[0].replace(/^A2A /, "").trim() || "message";
-  const preview = lines.slice(1).map(l => l.trim()).find(l => l && !l.startsWith("("));
+  const preview = lines.slice(1).map(l => l.trim()).find(l => /^> ?\S/.test(l))?.replace(/^> ?/, "");
   return preview ? `${header} · "${preview.slice(0, 100)}${preview.length > 100 ? "…" : ""}"` : header;
 }
 

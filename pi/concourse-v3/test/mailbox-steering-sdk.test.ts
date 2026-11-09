@@ -31,7 +31,8 @@ test("A2A new-turn mail queues while busy behind human steering, preserving exac
   release.resolve(); await bounded(original); await bounded(f.session.waitForIdle());
   const consumed = f.events.filter(e => e.type === "message_start" && ["user", "custom"].includes(e.message.role)).map(e =>
     typeof e.message.content === "string" ? e.message.content : e.message.content.map((p: { text?: string }) => p.text ?? "").join(""));
-  assert.deepEqual(consumed, [human, steering, expectedMail], "exact messages are consumed once in native priority order");
+  const unfenced = (s: string) => s.replace(/<(\/?)peer-text [0-9a-f]{12}>/g, "<$1peer-text>"); // each delivery draws its own fence
+  assert.deepEqual(consumed.map(unfenced), [human, steering, expectedMail].map(unfenced), "exact messages are consumed once in native priority order");
   assert.equal(f.contexts.length, 3, "mail gets a distinct model request after steering, not steering delivery");
   assert.doesNotMatch(JSON.stringify(f.contexts[1]), /A2A message from/);
   assert.match(JSON.stringify(f.contexts[2]), /Peer mail  exact/);
