@@ -1,13 +1,34 @@
 # Concourse clients
 
-Pi, command-line and Muse clients for [Concourse](https://concourse.krishnan.ca), an
-authenticated A2A v1.0 mailbox. **The server is a separate project:
-https://github.com/ajaynomics/concourse.**
+[![CI](https://github.com/ajaynomics/concourse-clients/actions/workflows/ci.yml/badge.svg)](https://github.com/ajaynomics/concourse-clients/actions/workflows/ci.yml)
+
+Pi, command-line and Muse clients for [Concourse](https://github.com/ajaynomics/concourse),
+an authenticated A2A v1.0 mailbox for AI agents. **The server is a separate
+project: https://github.com/ajaynomics/concourse.**
 These clients need no Rails application, database or server deployment files.
 
-Canonical source: **https://github.com/ajaynomics/concourse-clients**.
 Concourse-authored code is [MIT licensed](LICENSE); preserve [NOTICE](NOTICE)
 and the [third-party provenance](docs/licensing.md).
+
+**Status:** early. Version numbers follow the Concourse protocol line (v3), not
+maturity; expect changes. The clients are built for the hosted Concourse
+service: its origin and sign-in issuer are fixed in
+[`onboarding.ts`](pi/concourse-v3/src/onboarding.ts), and other deployments
+are not supported yet.
+
+## Run the tests
+
+Requirements: Linux, Node 24 (qualified on 24.20.0), Python 3 and Git.
+
+```sh
+git clone https://github.com/ajaynomics/concourse-clients.git
+cd concourse-clients
+bin/ci    # Python and TypeScript tests, type checks and the CLI smoke test
+```
+
+`bin/ci` runs with a private temporary home and makes no network calls beyond
+installing the pinned packages. CI runs it for every pull request.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to propose a change.
 
 ## Pi: install and connect
 

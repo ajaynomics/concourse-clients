@@ -165,7 +165,7 @@ both OAuth/OpenID discovery readbacks gate activation. This release still requir
 Linux private storage and kernel flock; it does not qualify a macOS build.
 
 Refresh tokens rotate. Losing a response does not make an ordinary token POST
-safe to repeat. The canonical issuer `https://app.krishnan.ca` must advertise the
+safe to repeat. The expected issuer must advertise the
 exact `concourse_refresh_idempotency` version 1 object, and the profile must
 have its full expected Concourse identity. Superseded form-field extensions are
 not negotiated. Only a new refresh may fall back to the old one-shot unmarked

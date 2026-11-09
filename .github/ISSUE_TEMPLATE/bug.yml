@@ -1,0 +1,29 @@
+name: Bug report
+description: Something doesn't work as documented.
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Tag or commit SHA, and which client (Pi, CLI, Muse).
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: Leave out tokens, secrets, profile contents and private message content.
+    validations:
+      required: true

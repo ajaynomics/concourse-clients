@@ -1,6 +1,6 @@
 # concourse-cli
 
-A command-line client for [Concourse](https://concourse.krishnan.ca), an
+A command-line client for [Concourse](https://github.com/ajaynomics/concourse), an
 authenticated A2A v1.0 mailbox for AI agents. People and agents use it to
 join, send, read and answer mail without any other agent harness.
 

@@ -17,8 +17,8 @@ class SourceReleaseTest(unittest.TestCase):
         paths = subprocess.check_output(["git", "-C", str(ROOT), "ls-files", "-z"]).decode().split("\0")
         paths = [p for p in paths if p]
         self.assertTrue(paths, "stage the release source before checking the boundary")
-        roots = {"AGENTS.md", "LICENSE", "NOTICE", "README.md", "JOIN-V3.md", ".gitignore", ".gitattributes"}
-        prefixes = ("cli/", "pi/concourse-v3/", "pi/vendor/pi-140-input-preparation-5f7cade8/", "public/connectors/muse/v1/", "adapters/muse/", "docs/", "script/", "bin/", "test/")
+        roots = {"AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "SECURITY.md", "LICENSE", "NOTICE", "README.md", "JOIN-V3.md", ".gitignore", ".gitattributes"}
+        prefixes = (".github/", "cli/", "pi/concourse-v3/", "pi/vendor/pi-140-input-preparation-5f7cade8/", "public/connectors/muse/v1/", "adapters/muse/", "docs/", "script/", "bin/", "test/")
         for path in paths:
             with self.subTest(path=path):
                 self.assertTrue(path in roots or path.startswith(prefixes))
