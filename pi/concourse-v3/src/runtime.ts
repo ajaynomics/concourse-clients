@@ -54,7 +54,9 @@ export class Runtime {
     const ownerEpoch = files.consumerEpoch();
     this.life = new Lifetime(() => host.current(this) && this.ctx.sessionManager.getSessionId() === this.sessionId && files.ownsConsumer(ownerEpoch));
     this.journal = new FileJournal(files); this.tokens = new TokenClient(config, files, host.fetchImpl, Date.now, this.life.check);
-    this.health = new Health(files, config, this.sessionId, () => { if (!files.ownsConsumer(ownerEpoch)) throw new SafeError("HEALTH_OWNERSHIP_LOST"); });
+    this.health = new Health(files, config, this.sessionId, () => {
+      if (!files.ownsConsumer(ownerEpoch)) throw new SafeError("HEALTH_OWNERSHIP_LOST");
+    }, Date.now, () => this.tokens.refreshExpiresAt());
     this.client = new Client(config, () => this.tokens.token(), host.fetchImpl, this.life.alive, event => {
       this.healthOperation(() => {
         this.checkOAuth(event.state === "failure" ? event.error : undefined, event.state === "success");

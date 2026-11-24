@@ -106,6 +106,16 @@ error messages/details, tokens, correspondence IDs, cursors or peer content
 are included. Treat this file as private: configured identities are not public
 telemetry.
 
+For OAuth profiles, `auth.refreshExpiresAt` is the estimated fixed refresh-family
+deadline in Unix epoch milliseconds. The issuer reports `refresh_token_expires_in`
+in seconds on a successful login or refresh. The consumer publishes the saved
+deadline on its next health write; terminal login does not claim a running
+session. A refresh cannot move a known deadline later. If the issuer omits the
+field or supplies an invalid value, the deadline stays unknown unless that same
+family already reported one. Absence is unknown, not expiry. Machine credentials
+do not have this field. This is a warning input, not a change to authentication or
+the existing health freshness and failure checks.
+
 Channel meanings are deliberately narrow:
 
 - Identity success means the identity GET body passed the configured-identity

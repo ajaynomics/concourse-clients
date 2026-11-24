@@ -44,11 +44,13 @@ function boundedFetch(origin: string, fetchImpl: Fetch, identityErrors = false, 
     const deadline = AbortSignal.timeout(15_000);
     const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
     let responseStatus: number | undefined;
+    let dispatcher: Dispatcher | undefined;
     try {
       const refreshResponse = refreshEndpoint !== undefined && url.href === refreshEndpoint && init.method === "POST";
       // Native fetch hides 3xx as transport errors in error mode. Expose their
       // status without following them, so a refusal cannot authorize a retry.
-      const response = await fetchImpl(url, { ...init, signal, redirect: refreshResponse ? "manual" : "error" });
+      dispatcher = write ? freshDispatcher() : undefined;
+      const response = await fetchImpl(url, { ...init, ...(dispatcher ? { dispatcher } : {}), signal, redirect: refreshResponse ? "manual" : "error" });
       responseStatus = response.status;
       if (response.redirected || (response.url && new URL(response.url).origin !== expected) || (response.status >= 300 && response.status < 400)) {
         void response.body?.cancel().catch(() => {}); throw new SafeError("REDIRECT_REFUSED", write);
@@ -76,9 +78,34 @@ function boundedFetch(origin: string, fetchImpl: Fetch, identityErrors = false, 
     } catch (e) {
       if (e instanceof SafeError) throw e;
       if (refreshEndpoint !== undefined && responseStatus !== undefined) throw new SafeError("INVALID_REFRESH_RESPONSE", false, responseStatus);
-      throw new SafeError("TRANSPORT_FAILED", write);
+      throw new SafeError("TRANSPORT_FAILED", write, undefined, networkCode(e));
+    } finally {
+      // The response is fully buffered above, so its own connection can go.
+      void dispatcher?.close().catch(() => {});
     }
   };
+}
+// A write goes out on a connection of its own. Reusing an idle keep-alive connection the
+// server has just closed loses the write before the server reads it, and fetch retries only
+// reads, so the client could say only "unknown". Node's fetch exposes no Agent of its own;
+// its default dispatcher is one, so a new instance of that class is a plain, unshared Agent.
+// With a custom global dispatcher (a proxy, say) the write keeps today's shared connections.
+type Dispatcher = { close(): Promise<void> };
+function freshDispatcher(): Dispatcher | undefined {
+  const shared = (globalThis as Record<symbol, unknown>)[Symbol.for("undici.globalDispatcher.1")];
+  const Agent = (shared as { constructor?: unknown } | undefined)?.constructor;
+  if (typeof Agent !== "function" || Agent.name !== "Agent") return undefined;
+  try { return new (Agent as new () => Dispatcher)(); } catch { return undefined; }
+}
+// The network error's code only (for example UND_ERR_SOCKET, ECONNRESET or TIMEOUT), never
+// its message, so an unknown write can be diagnosed later.
+function networkCode(e: unknown): { network: string } | Record<string, never> {
+  for (let c: unknown = e, depth = 0; c && typeof c === "object" && depth < 4; c = (c as { cause?: unknown }).cause, depth++) {
+    const { code, name } = c as { code?: unknown; name?: unknown };
+    if (typeof code === "string" && /^[A-Z][A-Z0-9_]{1,39}$/.test(code)) return { network: code };
+    if (name === "TimeoutError") return { network: "TIMEOUT" };
+  }
+  return {};
 }
 export async function json(response: Response): Promise<unknown> {
   try { return await response.json(); } catch { throw new SafeError("INVALID_JSON"); }

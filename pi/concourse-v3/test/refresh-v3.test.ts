@@ -105,12 +105,13 @@ for (const lost of ["before issuance", "after issuance"]) test(`lost response ${
       assert.equal(j.parentFingerprint, fingerprint(old().refresh)); assert.equal(JSON.stringify(j).includes(old().refresh), false);
       assert.match(j.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
       if (f.forms.length === 1) { if (lost === "after issuance") generation++; throw new TypeError("synthetic lost token response"); }
-      generation++; return response(issued(form, dispatch(form), generation));
+      generation++; return response({ ...issued(form, dispatch(form), generation), refresh_token_expires_in: 14 * 86_400 });
     };
     const client = f.client();
     const errors = await Promise.allSettled([client.token(), client.token()]);
     for (const e of errors) { assert.equal(e.status, "rejected"); assert.match(String((e as PromiseRejectedResult).reason), /TRANSPORT_FAILED/); assert.equal(((e as PromiseRejectedResult).reason as SafeError).uncertain, false); }
     assert.equal(f.forms.length, 1); assert.equal(f.journal().phase, "retry-eligible"); assert.equal(f.journal().dispatches, 1);
+    assert.equal(client.refreshExpiresAt(), undefined);
     assert.equal(await f.client().token(), "new.access");
     assert.equal(f.forms.length, 2); assert.equal(f.reads(), 2); assert.equal(f.identities(), 1);
     assert.equal(f.forms[0].toString(), f.forms[1].toString());
@@ -123,6 +124,7 @@ for (const lost of ["before issuance", "after issuance"]) test(`lost response ${
     assert.equal(t.refreshCommit!.generation, lost === "after issuance" ? 2 : 1);
     assert.equal(t.refreshCommit!.id, marker(f.forms[0]));
     assert.equal(t.refreshCommit!.successorFingerprint, fingerprint(t.refresh));
+    assert.equal(f.client().refreshExpiresAt(), f.state.wall + 14 * 86_400_000);
   } finally { f.cleanup(); }
 });
 

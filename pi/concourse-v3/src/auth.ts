@@ -32,7 +32,13 @@ export function validateConfig(c: Config): Config {
 }
 interface CodeCommit { version: 1; id: string; ownerEpoch: string; bindingFingerprint: string; fenceFingerprint: string; accessFingerprint: string; successorFingerprint: string; expires: number; identity?: VerifiedIdentity }
 interface CodeExchange { version: 1; id: string; ownerEpoch: string; bindingFingerprint: string; fenceFingerprint: string; phase: "dispatch-uncertain" | "committing"; commit?: CodeCommit }
-interface Tokens { access: string; refresh?: string; expires: number; resource: string; clientId: string; issuer: string; refreshCommit?: RefreshCommit; codeCommit?: CodeCommit }
+interface Tokens { access: string; refresh?: string; expires: number; resource: string; clientId: string; issuer: string; refreshExpiresAt?: number; refreshCommit?: RefreshCommit; codeCommit?: CodeCommit }
+const validExpiry = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 8_640_000_000_000_000;
+function expiresFromSeconds(seconds: unknown, since: number): number | undefined {
+  if (typeof seconds !== "number" || !Number.isSafeInteger(seconds) || seconds < 0) return;
+  const end = since + seconds * 1000;
+  if (validExpiry(end)) return end;
+}
 const unresolved = (fence: unknown): boolean => fence !== undefined && fence !== false;
 const snapshot = (value: unknown): string => fingerprint(JSON.stringify(value ?? null));
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?![\s\S])/.test(value);
@@ -70,6 +76,12 @@ export class TokenClient {
     return this.inFlight;
   }
   private matches(t: Tokens): boolean { return t.resource === this.config.origin && t.clientId === this.config.oauthClientId && t.issuer === this.config.issuer; }
+  // Health reads time only, from the same atomic record as the current grant.
+  refreshExpiresAt(): number | undefined {
+    if (this.config.auth.kind !== "oauth") return;
+    const stored = this.files.read<Tokens>("tokens.json");
+    if (stored && this.matches(stored) && validRefresh(stored.refresh) && validExpiry(stored.refreshExpiresAt)) return stored.refreshExpiresAt;
+  }
   private async acquire(): Promise<string> {
     this.guard(); const stored = this.files.read<Tokens>("tokens.json");
     if (stored && !this.matches(stored)) throw new SafeError("TOKEN_BINDING_MISMATCH");
@@ -201,6 +213,7 @@ export class TokenClient {
       } else if (oauth && !exchange) saveExchange(true);
       let r: Response;
       current();
+      const requestedAt = this.now();
       try {
         const transport = exchange ? refreshFetch(this.config.tokenEndpoint, this.fetchImpl) : safeFetch(new URL(this.config.tokenEndpoint).origin, this.fetchImpl);
         r = await transport(this.config.tokenEndpoint, { method: "POST", headers, body: form.toString() });
@@ -237,6 +250,14 @@ export class TokenClient {
       if (!object(b) || !validBearer(b.access_token) || typeof b.token_type !== "string" || b.token_type.toLowerCase() !== "bearer" || typeof b.expires_in !== "number" || !Number.isInteger(b.expires_in) || b.expires_in <= 0 || b.expires_in > 3600 || (b.scope !== undefined && b.scope !== "concourse") || (this.config.auth.kind === "client_credentials" && ("refresh_token" in b || "id_token" in b)) || (oauth && !validRefresh(b.refresh_token))) throw new SafeError("INVALID_TOKEN_RESPONSE");
       const receipt = exchange ? responseReceipt(b, exchange) : undefined;
       const tokens: Tokens = { access: b.access_token, expires: this.now() + b.expires_in * 1000, resource: this.config.origin, clientId: this.config.oauthClientId, issuer: this.config.issuer, ...(typeof b.refresh_token === "string" ? { refresh: b.refresh_token } : {}) };
+      if (oauth) {
+        const reported = expiresFromSeconds(b.refresh_token_expires_in, requestedAt);
+        // A rotating refresh stays in the same family. Never push the known
+        // deadline back due to clock drift, or discard it if an older issuer omits it.
+        const previous = fields.grant_type === "refresh_token" && object(tokenSnapshot) ? tokenSnapshot.refreshExpiresAt : undefined;
+        const expiry = validExpiry(previous) ? Math.min(previous, reported ?? previous) : reported;
+        if (expiry !== undefined) tokens.refreshExpiresAt = expiry;
+      }
       let verified: VerifiedIdentity | undefined;
       if (expected && (exchange || code)) {
         const candidate = new Client(expected, async () => { current(); return tokens.access; }, this.fetchImpl, () => { current(); return true; });

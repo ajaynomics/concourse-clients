@@ -50,8 +50,11 @@ export class Outbox {
       // An HTTP 4xx or a complete JSON-RPC error answer (A2A v1.0 §9.5) is a definite refusal.
       // Anything else, including SESSION_REPLACED after a POST, stays uncertain.
       const refused = e instanceof SafeError && !e.uncertain && (e.code === "A2A_REFUSED" || !!e.status && e.status < 500);
-      latest.outgoing[id]!.phase = refused ? "refused" : "uncertain"; this.journal.save(latest);
-      if (!refused) throw new SafeError(`SEND_UNCONFIRMED_OR_REFUSED messageId=${id}`, true);
+      const network = e instanceof SafeError && typeof e.details.network === "string" ? e.details.network : undefined;
+      latest.outgoing[id]!.phase = refused ? "refused" : "uncertain";
+      if (network && !refused) latest.outgoing[id]!.network = network;
+      this.journal.save(latest);
+      if (!refused) throw new SafeError(`SEND_UNCONFIRMED_OR_REFUSED messageId=${id}${network ? ` network=${network}` : ""}`, true);
       const refusal = await this.refusal(e as SafeError, id, taskId);
       // A2A terminal tasks never restart, so the conversation goes on as a new task in the same
       // context. Only the server's exact TASK_TERMINAL refusal does this, and only once: the new

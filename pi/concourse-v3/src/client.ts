@@ -137,7 +137,7 @@ export class Client {
     await this.identity();
     const { client, wire } = await this.connect(recipient);
     const request: SendMessageRequest = { tenant: "", metadata: undefined, configuration: { returnImmediately: true, historyLength: 0, acceptedOutputModes: ["text/plain", "application/json"], taskPushNotificationConfig: undefined }, message: { messageId, taskId: taskId ?? "", contextId: contextId ?? "", role: Role.ROLE_USER, metadata: undefined, extensions: [], referenceTaskIds: [], parts: outbound } };
-    try { await client.sendMessage(request); this.check(); } catch (e) { if (e instanceof SafeError) throw e; throw rpcRefusal(wire.rpc(), "A2A_REFUSED") ?? new SafeError("A2A_SEND_UNCONFIRMED", true); }
+    try { await client.sendMessage(request); this.check(); } catch (e) { if (e instanceof SafeError) throw e; throw rpcRefusal(wire.rpc(), "A2A_REFUSED") ?? wire.lost() ?? new SafeError("A2A_SEND_UNCONFIRMED", true); }
     this.check(); const result = wire();
     if (!object(result)) throw new SafeError("INVALID_A2A_RESPONSE", true);
     if (object(result.task)) return result.task;
@@ -167,13 +167,15 @@ export class Client {
     const { ClientFactory, DefaultAgentCardResolver, JsonRpcTransportFactory } = await import("@a2a-js/sdk/client");
     const base = `${this.config.origin}/a2a/${[this.config.organization, ...recipient.split("/")].map(encodeURIComponent).join("/")}`;
     let wire: unknown, rpc: { id: unknown; body: unknown } | undefined;
+    // The A2A SDK may wrap a failed fetch; keep the original so its network code survives.
+    let lost: SafeError | undefined;
     const authFetch: Fetch = async (url, init = {}) => {
       this.check(); const token = await this.getToken(); this.check();
       // Never follow an arbitrary card-selected path with this bearer, even on the same host.
       const u = new URL(url instanceof Request ? url.url : String(url));
       if (![base, `${base}/`, `${base}/.well-known/agent-card.json`].includes(u.href)) throw new SafeError("A2A_CARD_DESTINATION_REFUSED");
       const headers = new Headers(init.headers); headers.set("authorization", `Bearer ${token}`);
-      const r = await this.fetch(url, { ...init, headers }); this.check();
+      const r = await this.fetch(url, { ...init, headers }).catch(e => { if (e instanceof SafeError && e.code === "TRANSPORT_FAILED") lost = e; throw e; }); this.check();
       if (init.method?.toUpperCase() === "POST") {
         const b = await json(r.clone()); this.check(); if (object(b)) wire = b.result;
         let id: unknown; try { id = JSON.parse(String(init.body)).id; } catch { /* no id: never a matching error response */ }
@@ -185,6 +187,6 @@ export class Client {
     const card = await resolver.resolve(`${base}/`); this.check();
     if (!card.supportedInterfaces.length || card.supportedInterfaces.some(i => i.protocolVersion !== "1.0" || i.protocolBinding !== "JSONRPC" || ![base, `${base}/`].includes(i.url))) throw new SafeError("A2A_CARD_VERSION_OR_DESTINATION_REFUSED");
     const client = await new ClientFactory({ transports: [new JsonRpcTransportFactory({ fetchImpl: authFetch })], clientConfig: { polling: true }, cardResolver: resolver, preferredTransports: ["JSONRPC"] }).createFromAgentCard(card);
-    this.check(); return { client, wire: Object.assign(() => wire, { rpc: () => rpc }) };
+    this.check(); return { client, wire: Object.assign(() => wire, { rpc: () => rpc, lost: () => lost }) };
   }
 }

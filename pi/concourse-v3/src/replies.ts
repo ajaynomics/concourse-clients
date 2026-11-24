@@ -17,8 +17,9 @@ export class Replies {
     catch (e) {
       this.guard();
       const refused = e instanceof SafeError && !e.uncertain && !!e.status && e.status < 500;
-      this.record(id, refused ? "refused" : "uncertain");
-      if (!refused) throw new SafeError(`REPLY_UNCONFIRMED replyId=${id}; read the original Task before retrying`, true);
+      const network = e instanceof SafeError && typeof e.details.network === "string" ? e.details.network : undefined;
+      this.record(id, refused ? "refused" : "uncertain", network);
+      if (!refused) throw new SafeError(`REPLY_UNCONFIRMED replyId=${id}${network ? ` network=${network}` : ""}; read the original Task before retrying`, true);
       const status = (e as SafeError).status!;
       // The worker API hides why a write was refused. Nothing changed, so a read is safe.
       if (await this.finished(taskId)) throw new SafeError("TASK_ALREADY_FINISHED", false, status, { replyId: id, status }, TASK_FINISHED_HINT);
@@ -31,7 +32,7 @@ export class Replies {
   private async finished(taskId: string): Promise<boolean> {
     try { const t = await this.client.get?.(taskId); this.guard(); return !!t && terminal(t.status.state); } catch { return false; }
   }
-  private record(id: string, phase: ReplyIntent["phase"]): void {
-    const l = this.journal.load(); l.replies![id].phase = phase; this.journal.save(l);
+  private record(id: string, phase: ReplyIntent["phase"], network?: string): void {
+    const l = this.journal.load(); l.replies![id].phase = phase; if (network) l.replies![id].network = network; this.journal.save(l);
   }
 }

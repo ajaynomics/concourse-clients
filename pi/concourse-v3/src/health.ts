@@ -17,6 +17,7 @@ export interface HealthSnapshot {
   identity: ChannelHealth; inbox: ChannelHealth; answers: ChannelHealth;
   blockedInbox: number; blockedAnswers: number;
   oauthCode?: "OAUTH_EXCHANGE_UNCERTAIN" | "OPERATOR_OAUTH_REQUIRED";
+  auth?: { refreshExpiresAt: number };
 }
 export function safeCode(error: unknown): string {
   return error instanceof SafeError && /^[A-Z][A-Z0-9_]{0,62}(?![\s\S])/.test(error.code) ? error.code : "LOCAL_OPERATION_FAILED";
@@ -36,7 +37,7 @@ export function channelState(snapshot: HealthSnapshot, channel: Channel, now = D
 export class Health {
   readonly snapshot: HealthSnapshot;
   private readonly ownerEpoch: string;
-  constructor(private files: PrivateFiles, config: Config, sessionId: string, private guard: () => void, private now = Date.now) {
+  constructor(private files: PrivateFiles, config: Config, sessionId: string, private guard: () => void, private now = Date.now, private refreshExpiry: () => number | undefined = () => undefined) {
     const at = now();
     this.ownerEpoch = files.consumerEpoch();
     this.snapshot = { version: 1, origin: config.origin, organization: config.organization, owner: config.owner, agent: config.agent,
@@ -46,6 +47,9 @@ export class Health {
   write(): void {
     this.guard();
     if (!this.files.ownsConsumer(this.ownerEpoch)) throw new SafeError("HEALTH_OWNERSHIP_LOST");
+    const refreshExpiresAt = this.refreshExpiry();
+    if (refreshExpiresAt === undefined) delete this.snapshot.auth;
+    else this.snapshot.auth = { refreshExpiresAt };
     this.snapshot.updatedAt = this.now();
     if (Buffer.byteLength(JSON.stringify(this.snapshot)) > 16 * 1024) throw new SafeError("HEALTH_SIZE_LIMIT");
     this.files.write("health.json", this.snapshot);

@@ -100,6 +100,4 @@ integrities and immutable Muse checksums, typechecks, and runs offline tests.
 It requires ordinary npm registry access but no service credentials, live
 model call or running client.
 
-Hosted forge automation is disabled: public contributions must not execute
-on private runners or use private caches/deploy credentials. `bin/ci` is the
-reproducible local gate; an isolated hosted runner can adopt it separately.
+GitHub Actions runs `bin/ci` without service credentials or deploy access.

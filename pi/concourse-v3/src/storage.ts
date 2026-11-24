@@ -43,8 +43,12 @@ export function createProfile(path: string): void {
     privateRoot(path);
   } finally { closeSync(fd); }
 }
-function safeFile(s: Stats): void {
-  if (!s.isFile() || s.nlink !== 1 || s.uid !== process.getuid?.() || (s.mode & 0o077) || s.size > 4 * 1024 * 1024) throw new Error("Unsafe private file");
+const privateFileBytes = 4 * 1024 * 1024;
+const ledgerBytes = 16 * 1024 * 1024;
+const fileLimit = (name: string): number => name === "ledger.json" ? ledgerBytes : privateFileBytes;
+
+function safeFile(s: Stats, limit = privateFileBytes): void {
+  if (!s.isFile() || s.nlink !== 1 || s.uid !== process.getuid?.() || (s.mode & 0o077) || s.size > limit) throw new Error("Unsafe private file");
 }
 export class PrivateFiles {
   readonly root: string;
@@ -84,17 +88,18 @@ export class PrivateFiles {
     try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
     catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return; throw e; }
     try {
-      safeFile(fstatSync(fd));
-      const bytes = Buffer.alloc(4 * 1024 * 1024 + 1); let size = 0;
+      const opened = fstatSync(fd); safeFile(opened, fileLimit(name));
+      // Bound allocation to the opened file, not the ledger's larger ceiling. Our writes replace the inode, never grow it.
+      const bytes = Buffer.alloc(opened.size + 1); let size = 0;
       while (size < bytes.length) { const n = readSync(fd, bytes, size, bytes.length - size, null); if (!n) break; size += n; }
-      if (size > 4 * 1024 * 1024) throw new Error("Private file too large");
+      if (size > opened.size) throw new Error("Private file grew while reading");
       this.check(); return JSON.parse(bytes.subarray(0, size).toString("utf8")) as T;
     } finally { closeSync(fd); }
   }
   write(name: string, value: unknown): void {
     this.read(name);
     const bytes = JSON.stringify(value);
-    if (Buffer.byteLength(bytes) > 4 * 1024 * 1024) throw new Error("Private ledger full; retain fences and reconcile offline");
+    if (Buffer.byteLength(bytes) > fileLimit(name)) throw new Error("Private ledger full; retain fences and reconcile offline");
     const path = this.path(name), tmp = this.path(`tmp-${randomUUID()}.json`);
     const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try {
